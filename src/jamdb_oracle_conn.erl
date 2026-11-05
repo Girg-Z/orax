@@ -42,7 +42,6 @@ connect(Opts, Tout) ->
     Auto        = proplists:get_value(autocommit, Opts, ?DEF_AUTOCOMMIT),
     Fetch       = proplists:get_value(fetch, Opts, ?DEF_FETCH),
     Sdu         = proplists:get_value(sdu, Opts, ?DEF_SDU),
-    ReadTout    = proplists:get_value(read_timeout, Opts, ?DEF_READ_TIMEOUT),
     Cset        = proplists:get_value(charset, Opts, utf8),
     Charset     = proplists:get_value(Cset, ?CHARSET, ?UTF8_CHARSET),
     SockOpts = [binary, {active, false}, {packet, raw},
@@ -58,7 +57,7 @@ connect(Opts, Tout) ->
             {ok, [{recbuf, RecBuf}]} = sock_getopts(Socket2, [recbuf]),
             sock_setopts(Socket2, [{buffer, RecBuf}]),
             State = #oraclient{socket=Socket2, env=EnvOpts, passwd=Passwd, auth=Desc,
-            auto=Auto, fetch=Fetch, sdu=Sdu, charset=Charset, timeouts={Tout, ReadTout}},
+            auto=Auto, fetch=Fetch, sdu=Sdu, charset=Charset, timeouts={Tout, deadline(Tout)}},
             {ok, State2} = send_req(login, State),
             handle_login(State2#oraclient{conn_state=auth_negotiate});
         {error, Reason} ->
@@ -86,30 +85,36 @@ reconnect(#oraclient{passwd=Passwd} = State) ->
     Pass2 = if NewPass =/= [] -> NewPass; true -> Pass end,
     connect([{password, Pass2}|EnvOpts]).
 
+%% The call timeout bounds the whole call, every round trip included. When it
+%% expires the call is broken off and {error, timeout, ...} is returned; the
+%% connection stays usable unless the server does not answer the break.
 -spec sql_query(state(), string() | tuple(), timeout()) -> query_result().
-sql_query(#oraclient{timeouts={_Tout, ReadTout}} = State, Query, Tout) ->
-    sql_query(State#oraclient{timeouts={Tout, ReadTout}}, Query).
+sql_query(#oraclient{timeouts={_Tout, Deadline}} = State, Query, Tout) ->
+    sql_query(State#oraclient{timeouts={Tout, Deadline}}, Query).
 
 -spec sql_query(state(), string() | tuple()) -> query_result().
-sql_query(State, Query) when is_list(Query) ->
-    sql_query(State, {Query, []});
-sql_query(State, {Query, Bind}) when length(Query) > 10 ->
-    sql_query(State, {Query, Bind, [], []});
-sql_query(State, {batch, Query, [Bind|Batch]}) ->
-    sql_query(State, {Query, Bind, Batch, []});
-sql_query(State, {fetch, Query, Bind}) ->
-    sql_query(State, {Query, Bind, [], fetch});
-sql_query(#oraclient{conn_state=connected} = State, {fetch, Cursor, RowFormat, LastRow}) ->
+sql_query(#oraclient{timeouts={Tout, _Deadline}} = State, Query) ->
+    query(State#oraclient{timeouts={Tout, deadline(Tout)}, break=false}, Query).
+
+query(State, Query) when is_list(Query) ->
+    query(State, {Query, []});
+query(State, {Query, Bind}) when length(Query) > 10 ->
+    query(State, {Query, Bind, [], []});
+query(State, {batch, Query, [Bind|Batch]}) ->
+    query(State, {Query, Bind, Batch, []});
+query(State, {fetch, Query, Bind}) ->
+    query(State, {Query, Bind, [], fetch});
+query(#oraclient{conn_state=connected} = State, {fetch, Cursor, RowFormat, LastRow}) ->
     {ok, State2} = send_req(fetch, State#oraclient{type=fetch}, Cursor),
     handle_resp({Cursor, RowFormat, [LastRow]}, State2);
-sql_query(#oraclient{conn_state=connected} = State, {Query, Bind, Batch, Fetch}) ->
+query(#oraclient{conn_state=connected} = State, {Query, Bind, Batch, Fetch}) ->
     {ok, State2} = send_req(exec, State, {Query, Bind, Batch}),
     #oraclient{defcols=DefCol, params=RowFormat, type=Type} = State2,
     handle_resp(get_param(defcols, {DefCol, RowFormat, Type}),
     State2#oraclient{type=get_param(type, {Type, Fetch})});
-sql_query(#oraclient{conn_state=connected, timeouts={_Tout, ReadTout}} = State, {Query, Bind}) ->
+query(#oraclient{conn_state=connected, timeouts={_Tout, Deadline}} = State, {Query, Bind}) ->
     case lists:nth(1, string:tokens(string:to_upper(Query)," \t;")) of
-        "SESSION" -> sql_query(State, {?ENCODER:encode_helper(sess, []), [], [], []});
+        "SESSION" -> query(State, {?ENCODER:encode_helper(sess, []), [], [], []});
         "COMMIT" -> handle_req(tran, State, ?TTI_COMMIT);
         "ROLLBACK" -> handle_req(tran, State, ?TTI_ROLLBACK);
         %% Autocommit is the commit-on-success option sent with each execute;
@@ -119,10 +124,12 @@ sql_query(#oraclient{conn_state=connected, timeouts={_Tout, ReadTout}} = State, 
         "COMOFF" -> {ok, [], State#oraclient{auto=0}};
         "PING" -> handle_req(tran, State, ?TTI_PING);
         "STOP" -> handle_req(stop, State, hd(Bind));
-        "START" -> handle_req(spfp, State, []), handle_req(start, State, hd(Bind));
+        "START" ->
+            State2 = state_of(handle_req(spfp, State, []), State),
+            handle_req(start, State2, hd(Bind));
         "CLOSE" -> send_req(close, State), handle_error(local, [], State);
-        "CURRESET" -> send_req(reset, State), {ok, [], State};
-        "TIMEOUT" -> {ok, [], State#oraclient{timeouts={hd(Bind), ReadTout}}};
+        "CURRESET" -> {ok, [], state_of(send_req(reset, State), State)};
+        "TIMEOUT" -> {ok, [], State#oraclient{timeouts={hd(Bind), Deadline}}};
         "FETCH" -> {ok, [], State#oraclient{fetch=hd(Bind)}};
         _ -> {ok, undefined, State}
     end.
@@ -131,56 +138,93 @@ loop(Values) ->
     receive {get, From} -> From ! Values, loop(Values); {set, Values2} -> loop(Values2) end.
 
 %% internal
-handle_login(#oraclient{socket=Socket, env=Env, sdu=Length, timeouts=Touts} = State) ->
-    case recv(Socket, Length, Touts) of
-        {partial, Data} ->
-            handle_login(Data, State);
-        {ok, ?TNS_DATA, Data} ->
-            handle_login(Data, State);
-        {ok, ?TNS_RESEND, _Data} ->
-            {ok, Socket2} = sock_renegotiate(Socket, Env, Touts),
-            {ok, State2} = send_req(login, State#oraclient{socket=Socket2}),
-            handle_login(State2);
-        {ok, ?TNS_ACCEPT, <<_Ver:16,_Opts:16,Sdu:16,_Rest/bits>>} ->
-            Task = spawn(fun() -> loop(0) end),
-            {ok, State2} = send_req(pro, State#oraclient{seq=Task,sdu=Sdu}),
-            handle_login(State2);
-        {ok, ?TNS_MARKER, _Data} ->
-            handle_req(marker, State, []);
-        {ok, ?TNS_REDIRECT, Data} ->
-            {ok, Opts} = ?DECODER:decode_token(net, {Data, Env}),
-            reconnect(State#oraclient{env=Opts});
-        {ok, ?TNS_REFUSE, <<_Bin:16,_Length:16,Rest/bits>>} ->
-            handle_error(local, binary_to_list(Rest), State);
-        {error, Type, Reason} ->
-            handle_error(Type, Reason, State)
-    end.
-
-handle_login(Data, State) ->
-    case handle_token(Data, State) of
-        {ok, State2} -> handle_login(State2);
-        State2 -> {ok, State2}                  %connected
-    end.
-
-handle_token(<<Token, Data/binary>>, State) ->
-    case Token of
-        ?TTI_PRO -> send_req(dty, State);
-        ?TTI_DTY -> send_req(sess, State);
-        ?TTI_RPA ->
-            case ?DECODER:decode_token(rpa, Data) of
-                {?TTI_SESS, Request} ->
-                    send_req(auth, State#oraclient{req=Request});
-                {?TTI_AUTH, Resp, Ver, SessId} ->
-                    #oraclient{auth = KeyConn} = State,
-                    Cursors = spawn(fun() -> loop([]) end),
-                    case jamdb_oracle_crypt:validate(#logon{auth=Resp, key=KeyConn}) of
-                        ok -> State#oraclient{conn_state=connected,auth=SessId,server=Ver,cursors=Cursors};
-                        error -> handle_error(remote, Resp, State)
-                    end
+handle_login(State) ->
+    case recv_packet(State) of
+        {ok, ?TNS_DATA, _Flags, Payload, State2} ->
+            case resp_packet(?TNS_DATA, Payload, {decoding, {<<>>, login}}, login, State2) of
+                {ok, Result, State3} -> handle_token(Result, State3);
+                Error -> Error
             end;
-        ?TTI_WRN -> handle_token(?DECODER:decode_token(wrn, Data), State);
-        _ -> handle_error(remote, Token, State)
+        {ok, ?TNS_RESEND, _Flags, _Payload, #oraclient{socket=Socket, env=Env, timeouts=Touts} = State2} ->
+            {ok, Socket2} = sock_renegotiate(Socket, Env, Touts),
+            {ok, State3} = send_req(login, State2#oraclient{socket=Socket2, buf = <<>>}),
+            handle_login(State3);
+        {ok, ?TNS_ACCEPT, _Flags, Payload, #oraclient{env=Env} = State2} ->
+            {Version, Sdu, Flags2} = accept_params(Payload),
+            %% the server marks the end of responses once the data types
+            %% message has asked for it in the compile time capabilities
+            Eor = Version >= ?TNS_VERSION_MIN_END_OF_RESPONSE
+                andalso Flags2 band ?TNS_ACCEPT_FLAG_HAS_END_OF_RESPONSE =/= 0
+                andalso proplists:get_value(end_of_response, Env, true)
+                andalso offered,
+            Task = spawn(fun() -> loop(0) end),
+            {ok, State3} = send_req(pro, State2#oraclient{seq=Task, sdu=Sdu, version=Version, eor=Eor}),
+            handle_login(State3);
+        {ok, ?TNS_MARKER, _Flags, Payload, State2} ->
+            case resp_packet(?TNS_MARKER, Payload, {decoding, {<<>>, []}}, [], State2) of
+                {ok, Result, State3} -> handle_result(Result, [], State3);
+                Error -> Error
+            end;
+        {ok, ?TNS_REDIRECT, _Flags, <<Length:16, Data/binary>>, #oraclient{env=Env} = State2} ->
+            case redirect_data(Length, Data, State2) of
+                {ok, Data2, State3} ->
+                    {ok, Opts} = ?DECODER:decode_token(net, {Data2, Env}),
+                    reconnect(State3#oraclient{env=Opts});
+                {error, timeout, State3} ->
+                    handle_error(socket, timeout, State3);
+                Error -> Error
+            end;
+        {ok, ?TNS_REFUSE, _Flags, <<_Bin:16,_Length:16,Rest/bits>>, State2} ->
+            handle_error(local, binary_to_list(Rest), State2);
+        {ok, Type, _Flags, _Payload, State2} ->
+            handle_error(socket, {unexpected_packet, Type}, State2);
+        {error, timeout, State2} ->
+            handle_error(socket, timeout, State2);
+        Error ->
+            Error
     end.
+
+%% Version, options, SDU, TDU, byte order, data length and offset, flags 1,
+%% then (version 315 on) the 32-bit SDU and (version 318 on) flags 2.
+accept_params(<<Version:16, _Opts:16, _Sdu:16, _:8/binary, _Flags1, _:9/binary, Sdu:32, Rest/binary>>)
+  when Version >= ?TNS_VERSION_MIN_LARGE_SDU ->
+    Flags2 =
+    case Rest of
+        <<_:5/binary, Flags:32, _/binary>> when Version >= ?TNS_VERSION_MIN_OOB_CHECK -> Flags;
+        _ -> 0
+    end,
+    {Version, Sdu, Flags2};
+accept_params(<<Version:16, _Opts:16, Sdu:16, _/binary>>) ->
+    {Version, Sdu, 0}.
+
+%% The redirect packet holds the length of the redirect data, which follows
+%% in the same packet or in the next data packet.
+redirect_data(Length, Data, State) when byte_size(Data) >= Length ->
+    {ok, Data, State};
+redirect_data(_Length, _Data, State) ->
+    case recv_packet(State) of
+        {ok, ?TNS_DATA, _Flags, <<_DataFlags:16, Data/binary>>, State2} -> {ok, Data, State2};
+        {ok, Type, _Flags, _Payload, State2} -> handle_error(socket, {unexpected_packet, Type}, State2);
+        Error -> Error
+    end.
+
+handle_token(pro, State) ->
+    {ok, State2} = send_req(dty, State),
+    handle_login(State2);
+handle_token(dty, #oraclient{eor=Eor} = State) ->
+    {ok, State2} = send_req(sess, State),
+    handle_login(State2#oraclient{eor=Eor =:= offered});
+handle_token({?TTI_SESS, Request}, State) ->
+    {ok, State2} = send_req(auth, State#oraclient{req=Request}),
+    handle_login(State2);
+handle_token({?TTI_AUTH, Resp, Ver, SessId}, #oraclient{auth=KeyConn} = State) ->
+    Cursors = spawn(fun() -> loop([]) end),
+    case jamdb_oracle_crypt:validate(#logon{auth=Resp, key=KeyConn}) of
+        ok -> {ok, State#oraclient{conn_state=connected,auth=SessId,server=Ver,cursors=Cursors}};
+        error -> handle_error(remote, Resp, State)
+    end;
+handle_token(Result, State) ->       %error
+    handle_result(Result, [], State).
 
 handle_error(remote, Reason, State) ->
     {error, remote, Reason, State};
@@ -211,8 +255,6 @@ handle_req(pig, #oraclient{cursors=Cursors,seq=Task} = State, {Type, Request}) -
     Pig2 = if LPig2 =/= [] -> get_record(pig, [], {?TTI_OCCA, LPig2}, Task); true -> <<>> end,
     Data = get_record(Type, [], Request, Task),
     handle_req(State, ?TNS_DATA, <<Pig/binary, Pig2/binary, Data/binary>>, []);
-handle_req(marker, State, Acc) ->
-    handle_req(State, ?TNS_MARKER, <<1,0,2>>, Acc);
 handle_req(fob, State, Acc) ->
     handle_req(State, ?TNS_DATA, <<?TTI_FOB>>, Acc);
 handle_req(Type, #oraclient{seq=Task} = State, Request) ->
@@ -248,8 +290,9 @@ send_req(close, #oraclient{cursors=Cursors} = State) ->
     freeval(Cursors),
     send_req(close, State#oraclient{server=0});
 send_req(reset, #oraclient{cursors=Cursors} = State) ->
-    handle_req(pig, State, {tran, ?TTI_PING}),
-    Cursors ! {set, []};
+    Result = handle_req(pig, State, {tran, ?TTI_PING}),
+    Cursors ! {set, []},
+    Result;
 send_req(Type, #oraclient{req=Request,seq=Task} = State) ->
     Data = get_record(Type, State, Request, Task),
     send(State, ?TNS_DATA, Data).
@@ -277,22 +320,14 @@ send_req(exec, #oraclient{charset=Charset,fetch=Fetch,cursors=Cursors,seq=Task} 
     send(State#oraclient{type=Type,defcols=DefCol,params=[get_param(format, B, #format{charset=Charset}) || B <- Bind2]},
         ?TNS_DATA, <<Pig/binary, Pig2/binary, Data/binary>>).
 
-handle_resp(Acc, #oraclient{socket=Socket, sdu=Length, timeouts=Touts} = State) ->
-    case recv(Socket, Length, Touts) of
-        {ok, ?TNS_DATA, Data} ->
-            handle_resp(Data, Acc, State);
-        {partial, _Data} = Partial ->
-            handle_resp(Partial, Acc, State);
-        {ok, ?TNS_MARKER, _Data} ->
-            handle_req(marker, State, Acc);
-        {error, Type, Reason} ->
-            handle_error(Type, Reason, State)
+handle_resp(Acc, State) ->
+    case recv_resp(Acc, State) of
+        {ok, Result, State2} -> handle_result(Result, Acc, State2);
+        Error -> Error
     end.
 
-handle_resp(Data, Acc, #oraclient{type=Type, cursors=Cursors} = State) ->
-    case decode_resp(Data, Acc, State) of
-        {recv_error, ErrType, Reason} ->
-            handle_error(ErrType, Reason, State);
+handle_result(Result, Acc, #oraclient{type=Type, cursors=Cursors} = State) ->
+    case Result of
         {0, _RowNumber, Cursor, {LCursor, RowFormat}, []} when Type =/= change, RowFormat =/= [] ->
             Type2 = if LCursor =:= Cursor -> Type; true -> cursor end,
             {ok, State2} = send_req(fetch, State, {Cursor, RowFormat}),
@@ -306,43 +341,34 @@ handle_resp(Data, Acc, #oraclient{type=Type, cursors=Cursors} = State) ->
                 more ->
                     {ok, State2} = send_req(fetch, State, Cursor),
                     handle_resp({Cursor, RowFormat, Rows}, State2);
-                {ok, Result} ->
+                {ok, Result2} ->
                     #oraclient{defcols=DefCol} = State,
+                    State2 =
                     case currval(DefCol, {LCursor, Cursor, RowFormat}, Cursors) of
-                        {reset, _} -> send_req(reset, State);
-                        _ -> more
+                        {reset, _} -> state_of(send_req(reset, State), State);
+                        _ -> State
                     end,
-                    {ok, Result, State};
-                {error, Result} ->
+                    {ok, Result2, State2};
+                {error, Result2} ->
+                    State2 =
                     case get_result(Cursors) of
-                        [] -> more;
-                        _ -> send_req(reset, State)
+                        [] -> State;
+                        _ -> state_of(send_req(reset, State), State)
                     end,
-                    {ok, Result, State}
+                    {ok, Result2, State2}
             end;
-        {ok, Result} -> %tran
-            {ok, Result, State};
+        {ok, Result2} -> %tran
+            {ok, Result2, State};
         {error, fob} -> %return
             handle_req(fob, State, Acc);
         {error, Reason} ->
             handle_error(remote, Reason, State)
     end.
 
-%% A response is only guessed complete when read_timeout expires after a full
-%% packet; a slow server can still be sending it. If such a response does not
-%% decode, wait for the rest within the call timeout and decode it again.
-decode_resp({partial, Data}, Acc, #oraclient{socket=Socket, sdu=Length, timeouts=Touts} = State) ->
-    try ?DECODER:decode_two_task(Data, Acc)
-    catch
-        error:_ ->
-            case recv_rest(Socket, Length, Touts, <<>>, Data) of
-                {ok, _PacketType, Data2} -> decode_resp(Data2, Acc, State);
-                {partial, _Data2} = Partial -> decode_resp(Partial, Acc, State);
-                {error, ErrType, Reason} -> {recv_error, ErrType, Reason}
-            end
-    end;
-decode_resp(Data, Acc, _State) ->
-    ?DECODER:decode_two_task(Data, Acc).
+state_of({ok, State}, _State) -> State;
+state_of({ok, _Result, State}, _State) -> State;
+state_of({error, _Type, _Reason, State}, _State) -> State;
+state_of(_Result, State) -> State.
 
 get_result(cursor, 0, _RowNumber, _RowFormat, _Rows) ->
     more;
@@ -444,8 +470,8 @@ sock_setopts(Socket, Opts) -> ssl:setopts(Socket, Opts).
 
 send(State, _PacketType, <<>>) ->
     {ok, State};
-send(#oraclient{socket=Socket,sdu=Length} = State, PacketType, Data) ->
-    {Packet, Rest} = ?ENCODER:encode_packet(PacketType, Data, Length),
+send(#oraclient{socket=Socket,sdu=Length,version=Version} = State, PacketType, Data) ->
+    {Packet, Rest} = ?ENCODER:encode_packet(PacketType, Data, Length, Version),
     case sock_send(Socket, Packet) of
         ok ->
             send(State, PacketType, Rest);
@@ -453,49 +479,173 @@ send(#oraclient{socket=Socket,sdu=Length} = State, PacketType, Data) ->
             handle_error(socket, Reason, State)
     end.
 
-recv(Socket, Length, {Tout, _ReadTout} = Touts) ->
-    case sock_recv(Socket, 0, Tout) of
-        {ok, NetworkData} ->
-            recv(Socket, Length, Touts, NetworkData, <<>>);
+deadline(infinity) -> infinity;
+deadline(Tout) -> erlang:monotonic_time(millisecond) + Tout.
+
+remaining(infinity) -> infinity;
+remaining(Deadline) -> max(0, Deadline - erlang:monotonic_time(millisecond)).
+
+%% Reads the next TNS packet, waiting for it until the call deadline.
+recv_packet(#oraclient{socket=Socket, buf=Buf, version=Version, timeouts={_Tout, Deadline}} = State) ->
+    case ?DECODER:decode_packet(Buf, Version) of
+        {ok, ?TNS_CONTROL, _Flags, _Payload, Rest} ->
+            recv_packet(State#oraclient{buf=Rest});
+        {ok, Type, Flags, Payload, Rest} ->
+            {ok, Type, Flags, Payload, State#oraclient{buf=Rest}};
+        more ->
+            case sock_recv(Socket, 0, remaining(Deadline)) of
+                {ok, NetworkData} ->
+                    recv_packet(State#oraclient{buf = <<Buf/binary, NetworkData/binary>>});
+                {error, timeout} ->
+                    {error, timeout, State};
+                {error, Reason} ->
+                    handle_error(socket, Reason, State)
+            end;
         {error, Reason} ->
-            {error, socket, Reason}
+            handle_error(socket, Reason, State)
     end.
 
-recv(read_timeout, Socket, Length, {_Tout, ReadTout} = Touts, Acc, Data) ->
-    case sock_recv(Socket, 0, ReadTout) of
-        {ok, NetworkData} ->
-            recv(Socket, Length, Touts, <<Acc/bits, NetworkData/bits>>, Data);
-        {error, timeout} when Data =:= <<>> ->
-            {ok, ?TNS_DATA, Data};
-        {error, timeout} ->
-            {partial, Data};
-        {error, Reason} ->
-            {error, socket, Reason}
+%% Receives the response to a request and decodes it as its packets arrive.
+%% Without the end of response marker, the response ends with the message that
+%% ends the call (error/status, as python-oracledb does); with it, the packets
+%% are read up to the marked one even when the call ended before, so the next
+%% call starts on a fresh response.
+recv_resp(Acc, State) ->
+    recv_resp({decoding, {<<>>, Acc}}, Acc, State).
+
+recv_resp(Loop, Acc, State) ->
+    case recv_packet(State) of
+        {ok, Type, _Flags, Payload, State2} ->
+            resp_packet(Type, Payload, Loop, Acc, State2);
+        {error, timeout, State2} ->
+            call_timeout(State2);
+        Error ->
+            Error
     end.
 
-%% Waits for the rest of a response within the call timeout; Acc holds the
-%% bytes of a packet that has not been fully received yet.
-recv_rest(Socket, Length, {Tout, _ReadTout} = Touts, Acc, Data) ->
-    case sock_recv(Socket, 0, Tout) of
-        {ok, NetworkData} ->
-            recv(Socket, Length, Touts, <<Acc/bits, NetworkData/bits>>, Data);
-        {error, Reason} ->
-            {error, socket, Reason}
+resp_packet(?TNS_DATA, <<?TNS_DATA_FLAGS_EOF:16, _Body/binary>>, _Loop, _Acc, State) ->
+    handle_error(socket, session_shutdown, State);
+resp_packet(?TNS_DATA, <<DataFlags:16, Body/binary>>, Loop, Acc, #oraclient{eor=Eor0} = State) ->
+    Eor = Eor0 =:= true,
+    End = Eor andalso end_of_response(DataFlags, Body),
+    Loop2 =
+    case Loop of
+        {decoding, Cont} ->
+            case ?DECODER:decode_response(Body, Cont, End) of
+                {more, Cont2} -> {decoding, Cont2};
+                {ok, Result} -> {decoded, Result};
+                {error, Reason} -> {failed, Reason}
+            end;
+        _ ->
+            Loop                        %the call has ended: skip to the end marker
+    end,
+    case Loop2 of
+        {decoding, _Cont} -> recv_resp(Loop2, Acc, State);
+        _ when Eor, not End -> recv_resp(Loop2, Acc, State);
+        {decoded, Result2} -> {ok, Result2, State};
+        {failed, Reason2} -> decode_failed(Reason2, State)
+    end;
+resp_packet(?TNS_MARKER, Payload, _Loop, Acc, State) ->
+    %% the server broke off the call (an error, usually): after the reset the
+    %% response starts over with the error
+    case reset(marker_type(Payload), State) of
+        {ok, Type, Payload2, State2} ->
+            resp_packet(Type, Payload2, {decoding, {<<>>, Acc}}, Acc, State2);
+        {error, timeout, State2} ->
+            call_timeout(State2);
+        Error ->
+            Error
+    end;
+resp_packet(Type, _Payload, _Loop, _Acc, State) ->
+    handle_error(socket, {unexpected_packet, Type}, State).
+
+end_of_response(DataFlags, _Body) when DataFlags band ?TNS_DATA_FLAGS_END_OF_RESPONSE =/= 0 -> true;
+end_of_response(_DataFlags, <<?TTI_EOR>>) -> true;
+end_of_response(_DataFlags, _Body) -> false.
+
+marker_type(<<_, _, Type, _/binary>>) -> Type;
+marker_type(_Payload) -> undefined.
+
+%% Sends a reset marker, discards what comes up to the server's reset marker
+%% and any markers after it, and returns the next packet: the start of the
+%% response that follows the break.
+reset(MarkerType, State) ->
+    case send(State, ?TNS_MARKER, <<1, 0, ?TNS_MARKER_RESET>>) of
+        {ok, State2} when MarkerType =:= ?TNS_MARKER_RESET -> skip_markers(State2);
+        {ok, State2} -> await_reset(State2);
+        Error -> Error
     end.
 
-recv(Socket, Length, Touts, Acc, Data) ->
-    case ?DECODER:decode_packet(Acc, Length) of
-        {ok, ?TNS_MARKER, <<1,0,1>>, _Rest} ->
-            recv(read_timeout, Socket, Length, Touts, <<>>, <<>>);
-        {ok, Type, PacketBody, <<>>} ->
-            {ok, Type, <<Data/bits, PacketBody/bits>>};
-        {ok, _Type, PacketBody, Rest} ->
-            recv(Socket, Length, Touts, Rest, <<Data/bits, PacketBody/bits>>);
-        {more, _Type, PacketBody, <<>>} ->
-            recv(read_timeout, Socket, Length, Touts, <<>>, <<Data/bits, PacketBody/bits>>);
-        {more, _Type, PacketBody, Rest} ->
-            recv(Socket, Length, Touts, Rest, <<Data/bits, PacketBody/bits>>);
-        {error, more} ->
-            %% the server is still sending this packet
-            recv_rest(Socket, Length, Touts, Acc, Data)
+await_reset(State) ->
+    case recv_packet(State) of
+        {ok, ?TNS_MARKER, _Flags, Payload, State2} ->
+            case marker_type(Payload) of
+                ?TNS_MARKER_RESET -> skip_markers(State2);
+                _ -> await_reset(State2)
+            end;
+        {ok, _Type, _Flags, _Payload, State2} ->
+            await_reset(State2);
+        Error ->
+            Error
+    end.
+
+skip_markers(State) ->
+    case recv_packet(State) of
+        {ok, ?TNS_MARKER, _Flags, _Payload, State2} -> skip_markers(State2);
+        {ok, Type, _Flags, Payload, State2} -> {ok, Type, Payload, State2};
+        Error -> Error
+    end.
+
+%% A response that does not decode: with the end of response marker it has
+%% been read whole; otherwise the call is broken off so that the connection
+%% is left at a known point. Either way the connection can still be used.
+decode_failed(Reason, #oraclient{eor=true} = State) ->
+    {error, local, Reason, State};
+decode_failed(Reason, State) ->
+    case break(?TNS_MARKER_BREAK, State) of
+        {ok, State2} -> {error, local, Reason, State2};
+        {error, _Type, Reason2, State2} -> handle_error(socket, {Reason, Reason2}, State2)
+    end.
+
+call_timeout(#oraclient{break=true} = State) ->
+    handle_error(socket, timeout, State);
+call_timeout(#oraclient{timeouts={Tout, _Deadline}} = State) ->
+    Reason = "call timeout of " ++ integer_to_list(Tout) ++ " ms exceeded",
+    case break(?TNS_MARKER_INTERRUPT, State) of
+        {ok, State2} -> {error, timeout, Reason, State2};
+        {error, _Type, Reason2, State2} -> handle_error(socket, {Reason, Reason2}, State2)
+    end.
+
+%% Breaks off the current call, as python-oracledb does: send a break marker,
+%% skip what is left of the response up to the server's marker, reset, and
+%% read the error response that follows. The server gets another call
+%% timeout to answer; if it does not, the connection is closed.
+break(MarkerType, #oraclient{timeouts={Tout, _Deadline}} = State) ->
+    State2 = State#oraclient{timeouts={Tout, deadline(Tout)}, break=true},
+    Result =
+    case send(State2, ?TNS_MARKER, <<1, 0, MarkerType>>) of
+        {ok, State3} when MarkerType =:= ?TNS_MARKER_BREAK ->
+            reset(MarkerType, State3);
+        {ok, State3} ->
+            await_marker(State3);
+        Error ->
+            Error
+    end,
+    case Result of
+        {ok, Type, Payload, State4} ->
+            case resp_packet(Type, Payload, {decoding, {<<>>, []}}, [], State4) of
+                {ok, _Result, State5} -> {ok, State5#oraclient{break=false}};
+                Error2 -> Error2
+            end;
+        {error, timeout, State4} ->
+            {error, socket, timeout, State4};
+        Error3 ->
+            Error3
+    end.
+
+await_marker(State) ->
+    case recv_packet(State) of
+        {ok, ?TNS_MARKER, _Flags, Payload, State2} -> reset(marker_type(Payload), State2);
+        {ok, _Type, _Flags, _Payload, State2} -> await_marker(State2);
+        Error -> Error
     end.

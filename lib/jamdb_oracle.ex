@@ -52,7 +52,8 @@ defmodule Jamdb.Oracle do
       {:ok, [{:proc_result, _, msg}]} -> {:error, msg}
       {:ok, [{:affected_rows, num_rows}]} -> {:ok, %{num_rows: num_rows, rows: nil}}
       {:ok, result} -> {:ok, result}
-      {:error, err} -> {:disconnect, err}
+      {:error, type, err} when type in [:timeout, :local] -> {:error, err}
+      {:error, _type, err} -> {:disconnect, err}
     end
   end
   def query(pid, sql, params) when is_pid(pid) do
@@ -63,10 +64,10 @@ defmodule Jamdb.Oracle do
     try do
       case :jamdb_oracle.sql_query(pid, query, timeout) do
         {:ok, result} -> {:ok, result}
-        {:error, _, err} -> {:error, err}
+        {:error, type, err} -> {:error, type, err}
       end
     catch
-      _, err -> {:error, err}
+      _, err -> {:error, :socket, err}
     end
   end
 
@@ -283,7 +284,7 @@ defmodule Jamdb.Oracle do
   def checkout(%{pid: pid, timeout: timeout} = s) do
     case sql_query(pid, ~c'SESSION', timeout) do
       {:ok, _} -> {:ok, s}
-      {:error, err} -> {:disconnect, error!(err), s}
+      {:error, _type, err} -> {:disconnect, error!(err), s}
     end
   end
 
@@ -291,7 +292,7 @@ defmodule Jamdb.Oracle do
   def ping(%{pid: pid, timeout: timeout, idle_interval: idle_interval} = s) do
     case sql_query(pid, ~c'PING', min(timeout, idle_interval)) do
       {:ok, _} -> {:ok, s}
-      {:error, err} -> {:disconnect, error!(err), s}
+      {:error, _type, err} -> {:disconnect, error!(err), s}
     end
   end
 

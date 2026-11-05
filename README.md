@@ -55,7 +55,12 @@ configuration:
   * `:password` - User password (Password for the connecting user)
   * `:parameters` - Keyword list of connection parameters
   * `:socket_options` - Options to be given to the underlying socket
-  * `:timeout` - The default timeout to use on queries, defaults to `15000`
+  * `:timeout` - The default timeout to use on queries, defaults to `15000`.
+    It bounds the whole call; when it expires the call is broken off and an error
+    is returned, and the connection stays usable if the server answers the break
+    within another timeout. Without out-of-band breaks the server only sees the
+    break between operations, so a statement still running after twice the
+    timeout closes the connection.
 
 ### Pool options
 
@@ -70,7 +75,11 @@ configuration:
     Note that Oracle implicitly commits DDL statements, also inside a transaction.
   * `:fetch` - Number of rows to fetch from the server
   * `:sdu` - Size of session data unit
-  * `:read_timeout` - Read timeout while reading from the socket, defaults to `500`
+  * `:end_of_response` - Use the end of response marker of Oracle Database 23ai
+    and later when the server offers it, defaults to `true`. Older servers do not
+    offer it; the end of each response is then found from its messages
+  * `:read_timeout` - Ignored, kept for compatibility: responses are read until
+    the protocol marks their end
   * `:role` - Mode that is used in an internal logon
   * `:prelim` - Mode that is permitted when the database is down
   * `:newpassword` - User new password (Change password for the connecting user)

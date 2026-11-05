@@ -35,6 +35,8 @@ defmodule Jamdb.Oracle.Integration.SlowResponseTest do
     end
   end
 
+  # read_timeout is ignored now; it is kept to show that a short one, which
+  # used to cut such responses, does no harm.
   test "a response with pauses longer than read_timeout is read whole" do
     config = Integration.config()
     {proxy_port, _proxy} = SlowProxy.start(config[:port], 100)

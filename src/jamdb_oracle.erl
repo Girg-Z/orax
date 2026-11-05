@@ -28,10 +28,15 @@ stop(Pid) ->
     gen_server:call(Pid, stop).
 
 sql_query(Pid, Query, Tout) ->
-    gen_server:call(Pid, {sql_query, Query, Tout}, Tout).
+    gen_server:call(Pid, {sql_query, Query, Tout}, call_timeout(Tout)).
 
 sql_query(Pid, Query) ->
-    gen_server:call(Pid, {sql_query, Query, ?default_timeout}).
+    sql_query(Pid, Query, ?default_timeout).
+
+%% When the call timeout expires the connection breaks the call off and waits
+%% up to another call timeout for the server to answer the break.
+call_timeout(infinity) -> infinity;
+call_timeout(Tout) -> 2 * Tout + 1000.
 
 %% gen_server callbacks
 init(Opts) ->
@@ -44,7 +49,9 @@ init(Opts) ->
             {stop, {Type, Result}}
     end.
 
-%% Error types: socket, remote, local
+%% Error types: socket (the connection is closed), remote, timeout (the call
+%% timeout expired, the connection is still usable), local (a response did not
+%% decode, the connection is still usable).
 handle_call({sql_query, Query, Tout}, _From, State) ->
     try jamdb_oracle_conn:sql_query(State, Query, Tout) of
         {ok, Result, State2} ->
@@ -52,8 +59,9 @@ handle_call({sql_query, Query, Tout}, _From, State) ->
         {error, Type, Reason, State2} ->
             {reply, {error, Type, Reason}, State2}
     catch
-        error:_Reason ->
-            {stop, normal, State}
+        Class:Reason:Stack ->
+            %% the state of the connection is unknown: report and close it
+            {stop, normal, {error, socket, {Class, Reason, lists:sublist(Stack, 5)}}, State}
     end;
 handle_call(stop, _From, State) ->
     try jamdb_oracle_conn:disconnect(State, 1) of

@@ -2,6 +2,7 @@
 
 %% API
 -export([decode_packet/2]).
+-export([decode_response/3]).
 -export([decode_two_task/2]).
 -export([decode_token/2]).
 -export([decode_helper/3]).
@@ -9,51 +10,95 @@
 -include("jamdb_oracle.hrl").
 
 %% API
-decode_packet(<<PacketSize:16, _PacketFlags:16, ?TNS_DATA, _Flags:8, 0:16, _DataFlags:16, Rest/bits>>, Length) ->
-    BodySize = PacketSize-10,
-    case Rest of
-        <<PacketBody:BodySize/binary, Rest2/bits>> when PacketSize =:= Length-37; PacketSize =:= Length-81 ->
-            {more, ?TNS_DATA, PacketBody, Rest2};
-        <<PacketBody:BodySize/binary, Rest2/bits>> ->
-            {ok, ?TNS_DATA, PacketBody, Rest2};
-        _ ->
-            {error, more}
-    end;
-decode_packet(<<_PacketSize:16, _PacketFlags:16, ?TNS_MARKER, _Flags:8, 0:16, Rest/bits>>, _Length) ->
-    {ok, ?TNS_MARKER, Rest, <<>>};
-decode_packet(<<_PacketSize:16, _PacketFlags:16, ?TNS_REDIRECT, _Flags:8, 0:16, _DataFlags:16, Rest/bits>>, Length) ->
-    case decode_packet(Rest, Length) of
-        {ok, ?TNS_DATA, PacketBody, <<>>} ->
-            {ok, ?TNS_REDIRECT, PacketBody, <<>>};
-        _ ->
-            {error, more}
-    end;
-decode_packet(<<PacketSize:16, _PacketFlags:16, Type, _Flags:8, 0:16, Rest/bits>>, _Length) ->
-    BodySize = PacketSize-8,
-    case Rest of
-        <<PacketBody:BodySize/binary, Rest2/bits>> ->
-            {ok, Type, PacketBody, Rest2};
-        _ ->
-            {error, more}
-    end;
-decode_packet(_,_) ->
-    {error, more}.
 
-decode_two_task(<<Token, Data/binary>>, Acc) ->
-    case Token of
-        ?TTI_DCB -> decode_token(dcb, Data, Acc);
-        ?TTI_IOV -> decode_token(iov, Data, Acc);
-        ?TTI_RXH -> decode_token(rxh, Data, Acc);
-        ?TTI_RXD -> decode_token(rxd, Data, Acc);
-        ?TTI_BVC -> decode_token(bvc, Data, Acc);
-        ?TTI_LOB -> decode_token(lob, Data, Acc);
-        ?TTI_RPA -> decode_token(rpa, Data, Acc);
-        ?TTI_OER -> decode_token(oer, Data, Acc);
-        ?TTI_STA -> {ok, Acc};     %tran
-        ?TTI_FOB -> {error, fob};  %return
+%% Splits the first TNS packet off the bytes received so far. Packet lengths
+%% take 32 bits once TNS version 315 or later is negotiated (large SDU), and
+%% 16 bits before that (connect phase and older servers).
+decode_packet(<<Size:32, Type, Flags, _Checksum:16, _/bits>> = Data, Version) when Version >= 315 ->
+    split_packet(Data, Size, Type, Flags);
+decode_packet(<<Size:16, _Checksum:16, Type, Flags, _HeaderChecksum:16, _/bits>> = Data, Version) when Version < 315 ->
+    split_packet(Data, Size, Type, Flags);
+decode_packet(_Data, _Version) ->
+    more.
+
+split_packet(_Data, Size, _Type, _Flags) when Size < 8 ->
+    {error, {packet_length, Size}};
+split_packet(Data, Size, Type, Flags) ->
+    case Data of
+        <<_Header:8/binary, Payload:(Size-8)/binary, Rest/bits>> ->
+            {ok, Type, Flags, Payload, Rest};
         _ ->
-            {error, <<Token, (hd(binary:split(Data, <<0>>)))/binary>>}
+            more
     end.
+
+%% Decodes a TTC response message by message, as its packets arrive. Cont is
+%% {Pending, Acc}: the start of a message that is not complete yet and the
+%% state decoded so far. When a message runs past the data received, decoding
+%% stops before it and returns {more, Cont}; the next packet resumes it.
+%% Final means the response is complete (end of response seen), so a message
+%% cut short is an error.
+decode_response(Data, {Pending, Acc}, Final) ->
+    decode_messages(<<Pending/binary, Data/binary>>, Acc, Final).
+
+%% Decodes a complete response; kept for callers that have all the data.
+decode_two_task(Data, Acc) ->
+    case decode_messages(Data, Acc, true) of
+        {ok, Result} -> Result;
+        {error, _} = Error -> Error
+    end.
+
+decode_messages(<<>>, Acc, false) ->
+    {more, {<<>>, Acc}};
+decode_messages(<<>>, _Acc, true) ->
+    {error, {decode_error, [{reason, incomplete_response}]}};
+decode_messages(<<Token, Body/binary>> = Data, Acc, Final) ->
+    case try_message(Token, Body, Acc) of
+        {next, Rest, Acc2} -> decode_messages(Rest, Acc2, Final);
+        {done, Result} -> {ok, Result};
+        incomplete when Final -> {error, decode_error(Token, incomplete_message, [])};
+        incomplete -> {more, {Data, Acc}};
+        {failed, Reason, Stack} -> {error, decode_error(Token, Reason, Stack)}
+    end.
+
+try_message(Token, Body, Acc) ->
+    try decode_message(Token, Body, Acc)
+    catch
+        throw:incomplete -> incomplete;
+        Class:Reason:Stack -> {failed, {Class, Reason}, Stack}
+    end.
+
+decode_error(Token, Reason, Stack) ->
+    {decode_error, [
+        {message_type, Token},
+        {reason, iolist_to_binary(io_lib:format("~0P", [Reason, 12]))},
+        {stacktrace, [{M, F, A, proplists:get_value(line, Loc)} || {M, F, A, Loc} <- lists:sublist(Stack, 3)]}
+    ]}.
+
+%% Message types may come in any order the protocol allows; each one updates
+%% the state ({next, Rest, Acc}) or ends the response ({done, Result}).
+decode_message(?TTI_DCB, Data, Acc) -> decode_token(dcb, Data, Acc);
+decode_message(?TTI_IOV, Data, Acc) -> decode_token(iov, Data, Acc);
+decode_message(?TTI_RXH, Data, Acc) -> decode_token(rxh, Data, Acc);
+decode_message(?TTI_RXD, Data, Acc) -> decode_token(rxd, Data, Acc);
+decode_message(?TTI_BVC, Data, Acc) -> decode_token(bvc, Data, Acc);
+decode_message(?TTI_LOB, Data, Acc) -> decode_token(lob, Data, Acc);
+decode_message(?TTI_RPA, Data, Acc) -> decode_token(rpa, Data, Acc);
+decode_message(?TTI_OER, Data, Acc) -> decode_token(oer, Data, Acc);
+decode_message(?TTI_WRN, Data, Acc) -> {next, decode_token(wrn, Data), Acc};
+decode_message(?TTI_PRO, _Data, login) -> {done, pro};     %protocol negotiation
+decode_message(?TTI_DTY, _Data, login) -> {done, dty};     %data types negotiation
+decode_message(?TTI_STA, Data, Acc) ->
+    _ = decode_next(ub2, decode_next(ub4, Data)),           %call status, seq number
+    case Acc of
+        {login, Result} -> {done, Result};
+        {value, Value} -> {done, {ok, Value}};
+        _ -> {done, {ok, Acc}}                               %tran
+    end;
+decode_message(?TTI_FOB, _Data, _Acc) -> {done, {error, fob}};  %return
+decode_message(?TTI_EOR, _Data, _Acc) ->
+    error(end_of_response_without_status);
+decode_message(Token, _Data, _Acc) ->
+    error({unknown_message_type, Token}).
 
 decode_token(oac, Data) ->
     DataType = decode_ub1(Data),
@@ -99,7 +144,7 @@ decode_token(net, {Data, EnvOpts}) ->
     {ok, [{host, Host}, {port, list_to_integer(Port)}]++EnvOpts};
 decode_token(rpa, Data) ->
     Num = decode_ub4(Data),
-    Values = decode_keyval(decode_next(Data), Num, []),
+    {Values, Rest} = decode_keyval(decode_next(Data), Num, []),
     SessKey = get_value("AUTH_SESSKEY", Values),
     Salt = get_value("AUTH_VFR_DATA", Values),
     Type = get_value("AUTH_VFR_DATA", Values, 3),
@@ -107,12 +152,12 @@ decode_token(rpa, Data) ->
     Logon = #logon{type=Type, auth=SessKey, salt=Salt, der_salt=DerivedSalt},
     case get_value("AUTH_SVR_RESPONSE", Values) of
         undefined ->
-            {?TTI_SESS, Logon};
+            {next, Rest, {?TTI_SESS, Logon}};
         Resp ->
             Value = get_value("AUTH_VERSION_NO", Values),
             SessId = get_value("AUTH_SESSION_ID", Values),
             Ver = decode_version(Value),
-            {?TTI_AUTH, Resp, Ver, SessId}
+            {next, Rest, {?TTI_AUTH, Resp, Ver, SessId}}
     end;
 decode_token(wrn, Data) ->
     A = decode_next(ub2,Data),     %error number
@@ -123,7 +168,12 @@ decode_token(wrn, Data) ->
 
 decode_token(dcb, Data, {_Cursor, _RowFormat, Type}) when is_atom(Type) ->
     {A, RowFormat} = decode_token(dcb, decode_next(Data)),
-    decode_two_task(A, {0, RowFormat, []});
+    {next, A, {0, RowFormat, []}};
+decode_token(dcb, Data, {Cursor, _RowFormat, _Bvc, Rows}) ->
+    decode_token(dcb, Data, {Cursor, [], Rows});
+decode_token(dcb, Data, {Cursor, _RowFormat, Rows}) ->
+    {A, RowFormat} = decode_token(dcb, decode_next(Data)),
+    {next, A, {Cursor, RowFormat, Rows}};
 decode_token(uds, Data, {RowFormat, 0}) ->
     {lists:reverse(RowFormat), Data};
 decode_token(uds, Data, {RowFormat, Num}) ->
@@ -141,7 +191,7 @@ decode_token(uds, Data, {RowFormat, Num}) ->
     data_precision=Precision}|RowFormat], Num-1});
 decode_token(rxh, Data, {Cursor, RowFormat, Type}) when is_atom(Type) ->
     A = decode_next(rxh,Data),
-    decode_two_task(A, {Cursor, RowFormat, [0], []});
+    {next, A, {Cursor, RowFormat, [0], []}};
 decode_token(rxh, Data, {Cursor, RowFormat, Rows}) ->
     A = decode_next(ub1,Data),     %flag
     B = decode_next(ub2,A),        %num requests
@@ -155,7 +205,7 @@ decode_token(rxh, Data, {Cursor, RowFormat, Rows}) ->
         _ -> decode_bvc(list_to_binary(Bitvec), RowFormat, [])
     end,
     F = decode_next(rxh,Data),
-    decode_two_task(F, {Cursor, RowFormat, Bvc, Rows});
+    {next, F, {Cursor, RowFormat, Bvc, Rows}};
 %% Some cursors (e.g. SELECT ... FOR UPDATE) send a row header before every
 %% row, so a header can follow rows already decoded in the same response.
 decode_token(rxh, Data, {Cursor, RowFormat, _Bvc, Rows}) ->
@@ -163,12 +213,12 @@ decode_token(rxh, Data, {Cursor, RowFormat, _Bvc, Rows}) ->
 decode_token(iov, Data, {Cursor, RowFormat, Type}) when is_atom(Type) ->
     A = decode_next(ub1,Data),
     Num = decode_ub2(A),
-    <<Mode:Num/binary, Rest/bits>> = decode_next(rxh,Data),
+    {Mode, Rest} = take(Num, decode_next(rxh,Data)),
     case binary:matches(Mode,[<<16>>,<<48>>]) of
-        [] -> decode_two_task(Rest, {0, [], []});               %proc_result
+        [] -> {next, Rest, {0, [], []}};               %proc_result
         _ ->
             Bind = lists:zip(binary_to_list(Mode), RowFormat),
-            decode_two_task(Rest, {Cursor, [decode_param(B) || B <- Bind], Type})
+            {next, Rest, {Cursor, [decode_param(B) || B <- Bind], Type}}
     end;
 decode_token(rxd, Data, {_Cursor, _RowFormat, fetch}) ->
     {A, CursorRowFormat} = decode_token(dcb, decode_next(ub1,Data)),
@@ -181,26 +231,32 @@ decode_token(rxd, Data, {_Cursor, _RowFormat, cursor}) ->
 decode_token(rxd, Data, {_Cursor, RowFormat, Type}) when is_atom(Type) ->
     case decode_data(Data, [], {[], RowFormat, Type}) of
     	{{Cursor, CursorRowFormat}, A} ->
-            decode_two_task(A, {Cursor, CursorRowFormat, []});  %fetch cursor
-        {Rows, A} -> decode_two_task(A, {0, RowFormat, Rows})   %proc_result
+            {next, A, {Cursor, CursorRowFormat, []}};  %fetch cursor
+        {Rows, A} -> {next, A, {0, RowFormat, Rows}}   %proc_result
     end;
+%% Row data without a row header or bit vector before it has every column.
+decode_token(rxd, Data, {Cursor, RowFormat, Rows}) when is_list(Rows) ->
+    decode_token(rxd, Data, {Cursor, RowFormat, [0], Rows});
 decode_token(rxd, Data, {Cursor, RowFormat, Bvc, Rows}) ->
     LastRow = last(Rows),
     {A, Row} = decode_rxd(Data, RowFormat, 1, Bvc, LastRow, []),
-    decode_two_task(A, {Cursor, RowFormat, Bvc, Rows++[Row]});
+    {next, A, {Cursor, RowFormat, Bvc, Rows++[Row]}};
 decode_token(bvc, Data, {Cursor, RowFormat, _Bvc, Rows}) ->
     A = decode_next(ub2,Data),
     {Bvc, Num} = decode_bvc(A, RowFormat, []),
     B = decode_next(ub1, A, Num),
-    decode_two_task(B, {Cursor, RowFormat, Bvc, Rows});
+    {next, B, {Cursor, RowFormat, Bvc, Rows}};
+decode_token(bvc, Data, {Cursor, RowFormat, Rows}) when is_list(Rows) ->
+    decode_token(bvc, Data, {Cursor, RowFormat, [0], Rows});
 decode_token(lob, Data, _Loc) ->
-    try decode_chr(Data) of
-        Value -> {ok, Value}
-    catch
-        error:_ -> {ok, [eof]}
-    end;
+    Value = decode_chr(Data),
+    {next, decode_next(chr, Data), {value, Value}};
 decode_token(rpa, Data, []) ->
-    {ok, [decode_ub4(Data)]};
+    Value = [decode_ub4(Data)],
+    {next, decode_next(rpa, Data), {value, Value}};
+decode_token(rpa, Data, login) ->
+    {next, A, Result} = decode_token(rpa, Data),
+    {next, A, {login, Result}};
 decode_token(rpa, Data, {_Cursor, RowFormat, Type}) when is_atom(Type) ->
     decode_token(rpa, Data, {0, RowFormat, []});
 decode_token(rpa, Data, {0, RowFormat, Rows}) ->
@@ -214,61 +270,89 @@ decode_token(rpa, Data, {0, RowFormat, Rows}) ->
             decode_ub4(C)
     end,
     D = decode_next(rpa,Data),
-    decode_two_task(D, {Cursor, RowFormat, Rows});
+    {next, D, {Cursor, RowFormat, Rows}};
 decode_token(rpa, Data, {Cursor, RowFormat, _Bvc, Rows}) ->
     decode_token(rpa, Data, {Cursor, RowFormat, Rows});
 decode_token(rpa, Data, {Cursor, RowFormat, Rows}) ->
     A = decode_next(rpa,Data),
-    decode_two_task(A, {Cursor, RowFormat, Rows});
+    {next, A, {Cursor, RowFormat, Rows}};
 decode_token(oer, Data, []) ->
     decode_token(oer, Data, {0, [], []});
+decode_token(oer, Data, login) ->
+    decode_token(oer, Data, {0, [], []});
+decode_token(oer, Data, {Tag, Result}) when Tag =:= login; Tag =:= value ->
+    case decode_token(oer, Data, {0, [], []}) of
+        {done, {0, _RowNumber, _Cursor, _RetFormat, _Rows}} when Tag =:= login -> {done, Result};
+        {done, {0, _RowNumber, _Cursor, _RetFormat, _Rows}} -> {done, {ok, Result}};
+        Error -> Error
+    end;
 decode_token(oer, Data, {_Cursor, RowFormat, Type}) when is_atom(Type) ->
     decode_token(oer, Data, {0, RowFormat, []});
 decode_token(oer, Data, {Cursor, RowFormat, _Bvc, Rows}) ->
     decode_token(oer, Data, {Cursor, RowFormat, Rows});
+%% The error message ends the call when the server does not mark the end of
+%% the response, so it is read to its last byte, error text included.
 decode_token(oer, Data, {Cursor, RowFormat, Rows}) ->
     A = decode_next(ub2,Data),           %end of call status
     B = decode_next(ub2,A),              %end to end seq number
     RowNumber = decode_ub4(B),
     C = decode_next(ub4,B),              %current row number
     RetCode = decode_ub2(C),
+    D = decode_next(ub2,C),              %error number
+    E = decode_next(ub2,D),              %array elem w/error
+    F = decode_next(ub2,E),              %array elem errno
+    CursorId = decode_ub2(F),
+    G = decode_next(ub2,F),              %cursor id
+    H = decode_next(ub2,G),              %error position
+    I = decode_next(ub1,H),              %sql type
+    J = decode_next(ub2,I),              %fatal
+    K = decode_next(ub2,J),              %flags
+    L = decode_next(ub2,K),              %user cursor options
+    M = decode_next(ub1,L),              %UPI parameter
+    N = decode_next(ub1,M),              %warning flag
+    O = decode_next(ub4,N),              %rowid rba
+    P = decode_next(ub2,O),              %partitionid
+    Q = decode_next(ub1,P),              %tableid
+    R = decode_next(ub4,Q),              %blocknumber
+    S = decode_next(ub2,R),              %slotnumber
+    T = decode_next(ub4,S),              %OS error
+    U = decode_next(ub1,T),              %statement number
+    V = decode_next(ub1,U),              %call number
+    W = decode_next(ub2,V),              %padding
+    X = decode_next(ub4,W),              %success iters
+    Y = decode_next(dalc,X,4),           %oerrdd, batch error codes, offsets, messages
+    Message =
+    case RetCode of
+        0 -> [];
+        _ -> _ = decode_next(chr,Y), decode_chr(Y)   %error message
+    end,
     RetFormat =
     case lists:member(RetCode, [0,1403]) of
-        true ->
-            D = decode_next(ub2,C),
-            E = decode_next(ub2,D),
-            F = decode_next(ub2,E),
-            {decode_ub2(F), RowFormat};  %defcols
-        false ->
-            D = decode_next(ub2,C),      %error number
-            E = decode_next(ub2,D),      %array elem w/error
-            F = decode_next(ub2,E),      %array elem errno
-            G = decode_next(ub2,F),      %cursor id
-            H = decode_next(ub2,G),      %error position 
-            I = decode_next(ub1,H),      %sql type 
-            J = decode_next(ub2,I),      %fatal 
-            K = decode_next(ub2,J),      %flags
-            L = decode_next(ub2,K),      %user cursor options
-            M = decode_next(ub1,L),      %UPI parameter
-            N = decode_next(ub1,M),      %warning flag
-            O = decode_next(ub4,N),      %rowid rba
-            P = decode_next(ub2,O),      %partitionid
-            Q = decode_next(ub1,P),      %tableid
-            R = decode_next(ub4,Q),      %blocknumber
-            S = decode_next(ub2,R),      %slotnumber
-            T = decode_next(ub4,S),      %OS error
-            U = decode_next(ub1,T),      %statement number
-            V = decode_next(ub1,U),      %call number
-            W = decode_next(ub2,V),      %padding
-            X = decode_next(ub4,W),      %success iters
-            Y = decode_next(dalc,X,4),
-            {Cursor, decode_dalc(Y)}
+        true -> {CursorId, RowFormat};   %defcols
+        false -> {Cursor, Message}
     end,
-    {RetCode, RowNumber, Cursor, RetFormat, Rows}.
+    {done, {RetCode, RowNumber, Cursor, RetFormat, Rows}}.
 
 decode_next(<<Length,Rest/bits>>) ->
-    <<_Data:Length/binary,Rest2/bits>> = Rest,
-    Rest2.
+    skip(Length, Rest);
+decode_next(<<>>) ->
+    throw(incomplete).
+
+%% The data received so far ends inside the current message.
+skip(Length, Data) ->
+    case Data of
+        <<_Data:Length/binary,Rest/bits>> -> Rest;
+        _ -> throw(incomplete)
+    end.
+
+take(Length, Data) ->
+    case Data of
+        <<Bin:Length/binary,Rest/bits>> -> {Bin, Rest};
+        _ -> throw(incomplete)
+    end.
+
+take_len(<<Length,Rest/bits>>) -> take(Length, Rest);
+take_len(<<>>) -> throw(incomplete).
 
 decode_next(_Type, Data, 0) ->
     Data;
@@ -280,10 +364,11 @@ decode_next(chr, Data, I) when is_binary(I) ->
     decode_next(chr, decode_next(Data), I).
 
 decode_next(Length,Data) when is_integer(Length) ->
-    <<_Data:Length/binary,Rest/bits>> = Data,
-    Rest;
+    skip(Length, Data);
 decode_next(ub1,<<_Data:8,Rest/bits>>) ->
     Rest;
+decode_next(ub1,<<>>) ->
+    throw(incomplete);
 decode_next(ub2,Data) ->
     decode_next(ub4,Data);
 decode_next(ub4,<<0,Rest/bits>>) ->
@@ -292,13 +377,16 @@ decode_next(ub4,<<I,_Rest/bits>> = Data) when I band 128 =:= 0 ->
     decode_next(Data);
 decode_next(ub4,<<_I,_N:8,Rest/bits>>) ->
     Rest;
+decode_next(ub4,_Data) ->
+    throw(incomplete);
 decode_next(dalc,<<0,Rest/bits>>) ->
     Rest;
 decode_next(dalc,<<254,Rest/bits>>) ->
     decode_next(chr,Rest,<<>>);
 decode_next(dalc,<<Length,Rest/bits>>) ->
-    <<_Data:Length/binary,Rest2/bits>> = Rest,
-    decode_next(Rest2);
+    decode_next(skip(Length, Rest));
+decode_next(dalc,<<>>) ->
+    throw(incomplete);
 decode_next(chr,<<254,Rest/bits>>) ->
     decode_next(chr,Rest,<<>>);
 decode_next(chr,Data) ->
@@ -416,10 +504,10 @@ decode_data(Data, #format{data_type=DataType}) when ?IS_CHAR_TYPE(DataType); ?IS
     {decode_value(Data, DataType), decode_next(chr,Data)};
 decode_data(Data, #format{data_type=DataType, data_scale=Scale, data_precision=Precision})
     when ?IS_NUMBER_TYPE(DataType) ->
-    <<Length, Bin:Length/binary, Rest/binary>> = Data,
+    {Bin, Rest} = take_len(Data),
     {{lsc(decode_number(Bin), Scale, Precision)}, Rest};
 decode_data(Data, #format{data_type=DataType}) when ?IS_FIXED_TYPE(DataType) ->
-    <<Length, Bin:Length/binary, Rest/binary>> = Data,
+    {Bin, Rest} = take_len(Data),
     {decode_value(Bin, DataType), Rest};
 decode_data(Data, #format{data_type=?TNS_TYPE_REFCURSOR}) ->
     {_Value, RestData} = decode_token(rxd, Data, {0, [], cursor}),
@@ -464,8 +552,8 @@ decode_param({Data, #format{param=in}=ValueFormat}) when Data =/= 32 ->
 decode_param({_Data, ValueFormat}) ->
     ValueFormat.
 
-decode_keyval(_Data,0,Acc) ->
-    Acc;
+decode_keyval(Data,0,Acc) ->
+    {Acc, Data};
 decode_keyval(Data,Num,Acc) ->
     {Key, A} =
     case decode_ub4(Data) of
@@ -486,16 +574,19 @@ decode_keyval(Data,Num,Acc) ->
     decode_keyval(E,Num-1,[{Key,Value,NbPair}|Acc]).
 
 decode_ub1(<<Data:8,_Rest/bits>>) ->
-    Data.
+    Data;
+decode_ub1(<<>>) ->
+    throw(incomplete).
 
 decode_ub2(Data) ->
     decode_ub4(Data).
 
 decode_ub4(<<0,_Rest/bits>>) -> 0;
 decode_ub4(<<I,Rest/bits>>) when I band 128 =:= 0 ->
-    <<Data:I/binary,_Rest2/bits>> = Rest,
+    {Data, _Rest2} = take(I, Rest),
     binary:decode_unsigned(Data);
-decode_ub4(<<_I,N:8,_Rest/bits>>) -> -N.
+decode_ub4(<<_I,N:8,_Rest/bits>>) -> -N;
+decode_ub4(_Data) -> throw(incomplete).
 
 decode_dalc(<<0,_Rest/bits>>) -> [];
 decode_dalc(<<254,Rest/bits>>) ->
@@ -507,15 +598,15 @@ decode_dalc(Data) ->
 
 decode_chr(<<254,Rest/bits>>) ->
     decode_chr(Rest, <<>>);
-decode_chr(<<Length,Rest/bits>>) ->
-    <<Data:Length/binary,_Rest2/bits>> = Rest,
-    binary_to_list(Data).
+decode_chr(Data) ->
+    {Bin, _Rest} = take_len(Data),
+    binary_to_list(Bin).
 
 decode_chr(<<0,_Rest/bits>>, Acc) ->
     binary_to_list(Acc);
-decode_chr(<<Length,Rest/bits>>, Acc) ->
-    <<Data:Length/binary,Rest2/bits>> = Rest,
-    decode_chr(Rest2, <<Acc/binary, Data/binary>>).
+decode_chr(Data, Acc) ->
+    {Bin, Rest} = take_len(Data),
+    decode_chr(Rest, <<Acc/binary, Bin/binary>>).
 
 decode_number(<<128>>) -> 0;
 decode_number(Data) ->

@@ -12,6 +12,18 @@
 -define(TNS_CONTROL, 14).
 -define(TNS_MAX, 19).
 
+-define(TNS_VERSION_DESIRED, 319).
+-define(TNS_VERSION_MIN_LARGE_SDU, 315).
+-define(TNS_VERSION_MIN_OOB_CHECK, 318).
+-define(TNS_VERSION_MIN_END_OF_RESPONSE, 319).
+-define(TNS_ACCEPT_FLAG_HAS_END_OF_RESPONSE, 16#02000000).
+-define(TNS_CCAP_END_OF_RESPONSE, 16#20).
+-define(TNS_DATA_FLAGS_EOF, 16#0040).
+-define(TNS_DATA_FLAGS_END_OF_RESPONSE, 16#2000).
+-define(TNS_MARKER_BREAK, 1).
+-define(TNS_MARKER_RESET, 2).
+-define(TNS_MARKER_INTERRUPT, 3).
+
 -define(TNS_TYPE_CHAR, 96).
 -define(TNS_TYPE_VARCHAR, 1).
 -define(TNS_TYPE_VCS, 9).
@@ -59,6 +71,7 @@
 -define(TTI_PFN, 17).   %piggyback
 -define(TTI_FOB, 19).   %flush out binds
 -define(TTI_BVC, 21).   %bit vector
+-define(TTI_EOR, 29).   %end of response
 
 -define(TTI_OPEN, 2).
 -define(TTI_EXEC, 4).

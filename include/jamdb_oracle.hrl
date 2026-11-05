@@ -16,7 +16,8 @@
     {ssl, list()} |
     {socket_options, list()} |
     {timeout, non_neg_integer()} |
-    {read_timeout, non_neg_integer()} |
+    {read_timeout, non_neg_integer()} |       %ignored: responses end when the protocol says so
+    {end_of_response, boolean()} |
     {autocommit, non_neg_integer()} |
     {fetch, non_neg_integer()} |
     {sdu, non_neg_integer()} |
@@ -44,7 +45,11 @@
     env = [],
     passwd,
     req,
-    seq
+    seq,
+    buf = <<>>,         %bytes received after the last whole packet
+    version = 0,        %negotiated TNS version
+    eor = false,        %the server marks the end of each response (offered: not asked yet)
+    break = false       %recovering from a break: no new break on timeout
 }).
 
 -record(logon, {

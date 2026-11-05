@@ -1,7 +1,7 @@
 -module(jamdb_oracle_tns_encoder).
 
 %% API
--export([encode_packet/3]).
+-export([encode_packet/3, encode_packet/4]).
 -export([encode_record/2]).
 -export([encode_token/3]).
 -export([encode_str/1]).
@@ -10,17 +10,26 @@
 -include("jamdb_oracle.hrl").
 
 %% API
-encode_packet(?TNS_DATA, Data, Length) ->
+encode_packet(Type, Data, Length) ->
+    encode_packet(Type, Data, Length, 0).
+
+%% Packets take a 32-bit length once TNS version 315 or later is negotiated.
+encode_packet(?TNS_DATA, Data, Length, Version) ->
     PacketSize = byte_size(Data) + 10,
     BodySize = Length - 10,
     case Data of
         <<PacketBody:BodySize/binary, Rest/bits>> when PacketSize > Length ->
-            {<<Length:16, 0:16, ?TNS_DATA:8, 0:8, 0:16, 32:16, PacketBody/binary>>, Rest};
-        _ ->  {<<PacketSize:16, 0:16, ?TNS_DATA:8, 0:8, 0:16, 0:16, Data/binary>>, <<>>}
+            {<<(packet_header(Length, ?TNS_DATA, Version))/binary, 32:16, PacketBody/binary>>, Rest};
+        _ ->  {<<(packet_header(PacketSize, ?TNS_DATA, Version))/binary, 0:16, Data/binary>>, <<>>}
     end;
-encode_packet(Type, Data, _Length) ->
+encode_packet(Type, Data, _Length, Version) ->
     PacketSize = byte_size(Data) + 8,
-    {<<PacketSize:16, 0:16, Type:8, 0:8, 0:16, Data/binary>>, <<>>}.
+    {<<(packet_header(PacketSize, Type, Version))/binary, Data/binary>>, <<>>}.
+
+packet_header(Size, Type, Version) when Version >= 315 ->
+    <<Size:32, Type:8, 0:8, 0:16>>;
+packet_header(Size, Type, _Version) ->
+    <<Size:16, 0:16, Type:8, 0:8, 0:16>>.
 
 encode_record(description, EnvOpts) ->
     {ok, UserHost}  = inet:gethostname(),
@@ -41,22 +50,28 @@ encode_record(description, EnvOpts) ->
                [] -> "TCP";
                 _ -> "TCPS" end ++
     ")(HOST="++Host++")(PORT="++integer_to_list(Port)++")))");
+%% Version 319 lets 23ai and later servers mark the end of each response;
+%% from 315 on, packet lengths take 32 bits and the SDU is sent in 32 bits too.
 encode_record(login, #oraclient{env=EnvOpts,sdu=Sdu,auth=Desc}) ->
     Data = if Desc =/= [] -> encode_str(Desc); true -> encode_record(description, EnvOpts) end,
     <<
-    1,57,                    % Packet version number
+    ?TNS_VERSION_DESIRED:16, % Packet version number
     1,57,                    % Lowest compatible version number
     0,0,                     % Global service options supported
-    Sdu:16,                  % SDU
+    (min(Sdu, 65535)):16,    % SDU
     255,255,                 % TDU
     79,152,                  % Protocol Characteristics
     0,0,                     % Max packets before ACK
     0,1,                     % 1 in hardware byte order
     (byte_size(Data)):16,    % Connect Data length
-    0,58,                    % Connect Data offset
+    0,74,                    % Connect Data offset
     0,0,0,0,                 % Max connect data that can be received
     132,132,                 % ANO disabled
     0:192,
+    Sdu:32,                  % SDU (large)
+    Sdu:32,                  % TDU (large)
+    0:32,                    % Connect flags 1
+    0:32,                    % Connect flags 2
     Data/binary
     >>;
 encode_record(sess, #oraclient{env=EnvOpts,seq=Tseq}) ->
@@ -116,13 +131,19 @@ encode_record(auth, #oraclient{env=EnvOpts,passwd=Passwd,req=Request,seq=Tseq}) 
     (encode_keyval("SESSION_CLIENT_VERSION", "186647296"))/binary
     >>,
     KeyConn};
-encode_record(dty, #oraclient{charset=Charset}) ->
+%% The compile time capabilities ask for the end of response marker (TTC4)
+%% only when the server offered it in the accept packet.
+encode_record(dty, #oraclient{charset=Charset,eor=Eor}) ->
     <<
     ?TTI_DTY,
     (encode_ub2(Charset))/binary,                                              %cli in charset
     (encode_ub2(encode_helper(utf16, Charset)))/binary,                        %cli out charset
     1,
-    38,6,1,0,0,106,1,1,6,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1,
+    (case Eor of
+        offered -> <<41,6,1,0,0,106,1,1,6,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1,
+                  0,0,?TNS_CCAP_END_OF_RESPONSE>>;
+        _ -> <<38,6,1,0,0,106,1,1,6,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1>>
+    end)/binary,
     7,2,0,0,0,0,0,0,
     1,1,1,0,2,2,10,0,8,8,1,0,12,12,10,0,23,23,1,0,24,24,1,0,25,25,1,0,
     26,26,1,0,27,27,1,0,28,28,1,0,29,29,1,0,30,30,1,0,31,31,1,0,32,32,1,0,
