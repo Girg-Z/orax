@@ -1,0 +1,46 @@
+# Changelog
+
+## 0.1.0
+
+First release of orax, forked from
+[jamdb_oracle](https://github.com/erlangbureau/jamdb_oracle) 0.5.12.
+
+### Breaking changes from jamdb_oracle
+
+  * The project is renamed: the Hex package and OTP application are `:orax`,
+    Erlang modules `jamdb_oracle_*` are `orax_*`, `Jamdb.Oracle` is `Orax` and
+    the Ecto adapter is `Ecto.Adapters.Orax`. Application config moves from
+    `config :jamdb_oracle` to `config :orax`.
+  * Supported servers are Oracle Database 19c and 26ai (23ai).
+  * Requires Elixir 1.18, OTP 27 and ecto_sql 3.14 or later.
+  * The JSON library defaults to Elixir's built-in `JSON` instead of `Jason`.
+    Set `config :orax, :json_library, Jason` to keep Jason.
+  * The default `app_name` sent to the server, shown as the program in
+    `V$SESSION`, is `"orax"` instead of `"jamdb"`.
+  * The `:read_timeout` parameter is removed. Responses are read until the
+    protocol marks their end.
+  * Autocommit is off inside `Repo.transaction/2` until COMMIT or ROLLBACK.
+
+### Protocol
+
+  * Read responses until the protocol marks their end, using the end of
+    response marker of 26ai when the server offers it, instead of relying on
+    `read_timeout`.
+  * Decode row headers repeated between rows in `FOR UPDATE` fetches.
+  * Fix TLS socket options and decode chunked RPA keywords.
+  * Fix RAW binds corrupting the binds that follow them.
+
+### Ecto adapter
+
+  * Support `insert/8`, identity primary keys and `RETURNING` binds, returned
+    as rows.
+  * Support `values/2` sources.
+  * Translate `json_extract_path` to `JSON_VALUE`.
+  * Add configurable identifier quoting (`config :orax, quote_identifiers: true`).
+  * Reject `select`, joins and CTEs in `update_all` and `delete_all`.
+  * Report bare, Ecto-cased constraint names in `to_constraints`.
+  * Load Oracle `DATE` values into `:date` fields.
+  * Return integers for integral unconstrained `NUMBER` values and map
+    unconstrained decimal columns to `NUMBER`.
+  * Convert `type/2` `:string` with `TO_CHAR` instead of `CAST`.
+  * Fix text and binary handling and parameterized intervals.
