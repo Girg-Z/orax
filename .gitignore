@@ -13,3 +13,4 @@ rel/example_project
 .concrete/DEV_MODE
 .rebar
 rebar.lock
+doc/
