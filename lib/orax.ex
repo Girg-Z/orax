@@ -119,11 +119,18 @@ defmodule Orax do
   end
   defp out_rows(result, _opts), do: result
 
+  # A batch executes the statement once for each row of params in a single
+  # round trip (array DML). When a row fails, the server keeps the changes of
+  # the rows before it, so they are undone to leave the batch atomic: rolled
+  # back under autocommit, rolled back to a savepoint taken before the batch
+  # otherwise.
   @impl true
-  def handle_execute(%{batch: true} = query, params, _opts, s) do
+  def handle_execute(%{batch: true} = query, params, opts, s) do
     %Orax.Query{statement: statement} = query
-    case query(s, {:batch, statement |> Orax.to_list, params}, []) do
-      {:ok, result} -> {:ok, query, result, s}
+    returning = Enum.map(Keyword.get(opts, :out, []), fn elem -> {:out, elem} end)
+    batch = {:batch, statement |> Orax.to_list, Enum.map(params, &(&1 ++ returning))}
+    case atomic(s, length(params), fn -> query(s, batch, []) end) do
+      {:ok, result} -> {:ok, query, out_rows(result, opts), s}
       {:error, err} -> {:error, error!(err), s}
       {:disconnect, err} -> {:disconnect, error!(err), s}
     end
@@ -135,6 +142,29 @@ defmodule Orax do
       {:ok, result} -> {:ok, query, out_rows(result, opts), s}
       {:error, err} -> {:error, error!(err), s}
       {:disconnect, err} -> {:disconnect, error!(err), s}
+    end
+  end
+
+  defp atomic(_s, 1, fun), do: fun.()
+  defp atomic(%{mode: :idle, autocommit: 1} = s, _rows, fun) do
+    case fun.() do
+      {:error, _err} = error -> undo(s, ~c"ROLLBACK", error)
+      result -> result
+    end
+  end
+  defp atomic(s, _rows, fun) do
+    with {:ok, _} <- query(s, ~c"SAVEPOINT orax_batch") do
+      case fun.() do
+        {:error, _err} = error -> undo(s, ~c"ROLLBACK TO orax_batch", error)
+        result -> result
+      end
+    end
+  end
+
+  defp undo(s, statement, error) do
+    case query(s, statement) do
+      {:disconnect, _err} = disconnect -> disconnect
+      _ -> error
     end
   end
 

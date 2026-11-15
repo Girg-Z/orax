@@ -26,11 +26,74 @@ defmodule Ecto.Adapters.Orax do
       returning_options(opts, schema_meta, returning))
   end
 
+  # Several rows are inserted with the INSERT of one row executed for each of
+  # them in a single round trip (array DML, python-oracledb's executemany):
+  # it works on 19c and 26ai and returns the RETURNING values of every row.
+  # Rows that leave out different fields (DEFAULT) or hold different
+  # subqueries need INSERTs of their own: consecutive rows of the same shape
+  # are batched together and the batches run in a transaction.
   @impl true
+  def insert_all(adapter_meta, schema_meta, header, [_, _ | _] = rows, on_conflict, returning,
+      placeholders, opts) do
+    %{source: source, prefix: prefix} = schema_meta
+    opts = [batch: true, source: source] ++ returning_options(opts, schema_meta, returning)
+
+    batches =
+      rows
+      |> Enum.map(&insert_row(header, &1))
+      |> Enum.chunk_by(&elem(&1, 0))
+      |> Enum.map(fn [{shape, _} | _] = batch ->
+        sql = Ecto.Adapters.Orax.Connection.insert(prefix, source, header, [shape], on_conflict,
+          returning, placeholders)
+        {sql, Enum.map(batch, fn {_, params} -> placeholders ++ params end)}
+      end)
+
+    run = fn ->
+      Enum.reduce(batches, {0, []}, fn {sql, params}, {count, acc} ->
+        %{num_rows: num, rows: rows} = Ecto.Adapters.SQL.query!(adapter_meta, sql, params, opts)
+        {count + num, acc ++ (rows || [])}
+      end)
+    end
+
+    {count, rows} =
+      case batches do
+        [_] -> run.()
+        _ ->
+          {:ok, result} = Ecto.Adapters.SQL.transaction(adapter_meta, opts, run)
+          result
+      end
+
+    {count, if(returning == [], do: nil, else: rows)}
+  end
+
   def insert_all(adapter_meta, schema_meta, header, rows, on_conflict, returning,
       placeholders, opts) do
     super(adapter_meta, schema_meta, header, rows, on_conflict, returning, placeholders,
       returning_options(opts, schema_meta, returning))
+  end
+
+  # The values of a row in the order of the header (Ecto.Adapters.SQL's
+  # unzip_inserts): nil for fields left out (DEFAULT), subqueries and
+  # placeholders as they are, the other fields as binds; and its params.
+  defp insert_row(header, fields) do
+    {shape, params} =
+      Enum.map_reduce(header, [], fn key, acc ->
+        case :lists.keyfind(key, 1, fields) do
+          {^key, {%Ecto.Query{} = query, query_params}} ->
+            {{query, length(query_params)}, Enum.reverse(query_params, acc)}
+
+          {^key, {:placeholder, placeholder_index}} ->
+            {{:placeholder, Integer.to_string(placeholder_index)}, acc}
+
+          {^key, value} ->
+            {key, [value | acc]}
+
+          false ->
+            {nil, acc}
+        end
+      end)
+
+    {shape, Enum.reverse(params)}
   end
 
   @doc false

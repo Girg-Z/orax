@@ -87,4 +87,60 @@ defmodule Orax.Integration.ReturningTest do
     assert {:ok, [1, 2, 3]} =
              Repo.transaction(fn -> query |> lock("FOR UPDATE SKIP LOCKED") |> Repo.all() end)
   end
+
+  defp names(prefix) do
+    Repo.all(from i in Item, where: like(i.name, ^"#{prefix}%"), order_by: i.id, select: {i.name, i.qty})
+  end
+
+  test "insert_all of several rows returns the values of every row" do
+    assert {3, [%{id: id1, name: "ia"}, %{id: id2, name: "ib"}, %{id: id3, name: "ic"}]} =
+             Repo.insert_all(Item, [%{name: "ia", qty: 1}, %{name: "ib", qty: nil}, %{name: "ic", qty: 3}],
+               returning: [:id, :name])
+
+    assert id1 < id2 and id2 < id3
+    assert names("i") == [{"ia", 1}, {"ib", nil}, {"ic", 3}]
+    assert {2, nil} = Repo.insert_all(Item, [%{name: "id", qty: 4}, %{name: "ie", qty: 5}])
+  end
+
+  test "insert_all of rows that leave out different fields keeps their order" do
+    rows = [%{name: "ha", qty: 1}, %{name: "hb"}, %{name: "hc"}, %{name: "hd", qty: 4}]
+
+    assert {4, returned} = Repo.insert_all(Item, rows, returning: [:id])
+    assert returned |> Enum.map(& &1.id) |> Enum.sort() == Enum.map(returned, & &1.id)
+    assert names("h") == [{"ha", 1}, {"hb", nil}, {"hc", nil}, {"hd", 4}]
+  end
+
+  test "insert_all that fails on a row inserts none of them" do
+    Repo.query!("ALTER TABLE orax_it_returning ADD CONSTRAINT orax_it_returning_qty CHECK (qty < 100)")
+    on_exit(fn ->
+      Repo.query!("ALTER TABLE orax_it_returning DROP CONSTRAINT orax_it_returning_qty")
+    end)
+
+    bad = [%{name: "fa", qty: 1}, %{name: "fb", qty: 2}, %{name: "fc", qty: 100}]
+    assert_raise DBConnection.ConnectionError, ~r/ORA-02290/, fn -> Repo.insert_all(Item, bad) end
+    assert names("f") == []
+
+    mixed = [%{name: "fd", qty: 1}, %{name: "fe"}, %{name: "ff", qty: 100}]
+    assert_raise DBConnection.ConnectionError, ~r/ORA-02290/, fn -> Repo.insert_all(Item, mixed) end
+    assert names("f") == []
+
+    assert {:ok, :done} =
+             Repo.transaction(fn ->
+               Repo.insert!(%Item{name: "fg", qty: 7})
+
+               assert_raise DBConnection.ConnectionError, ~r/ORA-02290/, fn ->
+                 Repo.insert_all(Item, bad)
+               end
+
+               :done
+             end)
+
+    assert names("f") == [{"fg", 7}]
+  end
+
+  test "insert_all with on_conflict other than :raise is not supported" do
+    assert_raise ArgumentError, ~r/:on_conflict is not supported by Oracle/, fn ->
+      Repo.insert_all(Item, [%{name: "oc", qty: 1}], on_conflict: :nothing)
+    end
+  end
 end

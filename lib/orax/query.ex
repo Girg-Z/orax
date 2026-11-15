@@ -73,9 +73,14 @@ defmodule Orax.Query do
     end
   end
 
+  # The INSERT of one row, or of the rows of a query. insert_all of several
+  # rows runs the INSERT of one row for each of them (see
+  # Ecto.Adapters.Orax.insert_all/8): VALUES with several rows needs 23ai and
+  # cannot return them.
   @doc false
-  def insert(prefix, table, header, rows, _on_conflict, returning,
+  def insert(prefix, table, header, rows, on_conflict, returning,
       placeholders \\ [], _opts \\ []) do
+    on_conflict!(on_conflict)
     counter_offset = length(placeholders) + 1
     from = insert_all(rows, counter_offset)
     values =
@@ -88,16 +93,18 @@ defmodule Orax.Query do
     ["INSERT INTO ", quote_table(prefix, table), values | returning(returning)]
   end
 
+  defp on_conflict!(:raise), do: :ok
+  defp on_conflict!({:raise, _, []}), do: :ok
+  defp on_conflict!(_on_conflict),
+    do: error!(nil, ":on_conflict is not supported by Oracle, only :raise")
+
   defp insert_all(query = %Ecto.Query{}, _counter) do
     [all(query)]
   end
 
-  defp insert_all(rows, counter) do
-    ["VALUES ", intersperse_reduce(rows, ?,, counter, fn row, counter ->
-      {row, counter} = insert_each(row, counter)
-      {[?(, row, ?)], counter}
-    end)
-    |> elem(0)]
+  defp insert_all([row], counter) do
+    {row, _counter} = insert_each(row, counter)
+    ["VALUES (", row, ?)]
   end
 
   defp insert_each(values, counter) do

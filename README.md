@@ -201,6 +201,15 @@ config :orax, :json_library, Jason
 In migrations, `add :name, :string, national: true` creates an `NVARCHAR2`
 column, and `comment:` on tables and columns is supported.
 
+### insert_all
+
+`Repo.insert_all/3` with several rows executes the `INSERT` of one row for
+each of them in a single round trip (array DML), on 19c and 26ai alike, and
+`:returning` gives the values of every row. Rows that leave out different
+fields are inserted by one such batch for each run of rows of the same shape,
+in a transaction. A row that fails inserts none of the rows. `:on_conflict`
+is not supported (only `:raise`).
+
 ## Raw SQL and PL/SQL
 
 `Repo.query/4` takes positional (`:1`, `:2`) binds. Binds whose type cannot be

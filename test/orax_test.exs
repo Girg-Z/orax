@@ -973,6 +973,12 @@ defmodule OraxTest do
     assert query == ~s{INSERT INTO prefix.schema VALUES (:1,:2)}
   end
 
+  test "insert with on_conflict other than :raise is not supported" do
+    assert_raise ArgumentError, ~r/:on_conflict is not supported by Oracle/, fn ->
+      insert(nil, "schema", [:x], [[:x]], {:nothing, [], []}, [])
+    end
+  end
+
   test "quotes all identifiers in queries when configured" do
     previous = Application.get_env(:orax, :quote_identifiers)
     Application.put_env(:orax, :quote_identifiers, true)
