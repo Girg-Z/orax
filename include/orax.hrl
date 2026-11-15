@@ -48,6 +48,7 @@
     buf = <<>>,         %bytes received after the last whole packet
     version = 0,        %negotiated TNS version
     eor = false,        %the server marks the end of each response (offered: not asked yet)
+    field_version = ?TNS_CCAP_FIELD_VERSION_11_2,  %TTC field version, negotiated with the server
     break = false       %recovering from a break: no new break on timeout
 }).
 

@@ -88,4 +88,22 @@ defmodule OraxTnsEncoderTest do
     assert <<_::binary-size(16), 231::16, 74::16, _::binary>> = connect
     assert byte_size(connect) == 74 - 8
   end
+
+  # compile time capabilities as sent before they were built by a function
+  @caps_11_2 <<38, 6, 1, 0, 0, 106, 1, 1, 6, 1, 1, 1, 1, 1, 1, 0, 41, 144, 3, 7, 3, 0, 1, 0,
+               79, 1, 55, 4, 0, 0, 0, 0, 12, 0, 0, 6, 0, 1, 1>>
+  @caps_11_2_eor <<41, 6, 1, 0, 0, 106, 1, 1, 6, 1, 1, 1, 1, 1, 1, 0, 41, 144, 3, 7, 3, 0, 1, 0,
+                   79, 1, 55, 4, 0, 0, 0, 0, 12, 0, 0, 6, 0, 1, 1, 0, 0, 0x20>>
+
+  defp dty_caps(record) do
+    <<2, _charsets::binary-size(4), 1, length, caps::binary-size(length), _::binary>> =
+      :orax_tns_encoder.encode_record(:dty, record)
+
+    <<length, caps::binary>>
+  end
+
+  test "field version 6 compile caps are unchanged, with and without end of response" do
+    assert dty_caps(oraclient(charset: 873, field_version: 6, eor: false)) == @caps_11_2
+    assert dty_caps(oraclient(charset: 873, field_version: 6, eor: :offered)) == @caps_11_2_eor
+  end
 end

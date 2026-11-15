@@ -85,7 +85,7 @@ decode_message(?TTI_LOB, Data, Acc) -> decode_token(lob, Data, Acc);
 decode_message(?TTI_RPA, Data, Acc) -> decode_token(rpa, Data, Acc);
 decode_message(?TTI_OER, Data, Acc) -> decode_token(oer, Data, Acc);
 decode_message(?TTI_WRN, Data, Acc) -> {next, decode_token(wrn, Data), Acc};
-decode_message(?TTI_PRO, _Data, login) -> {done, pro};     %protocol negotiation
+decode_message(?TTI_PRO, Data, login) -> {done, {pro, decode_token(pro, Data)}};  %protocol negotiation
 decode_message(?TTI_DTY, _Data, login) -> {done, dty};     %data types negotiation
 decode_message(?TTI_STA, Data, Acc) ->
     _ = decode_next(ub2, decode_next(ub4, Data)),           %call status, seq number
@@ -119,6 +119,22 @@ decode_token(oac, Data) ->
     M = decode_next(ub1,L),        %character set form
     N = decode_next(ub4,M),        %mxlc
     {N, DataType, Length, Scale, Charset, Precision};
+%% The protocol response: server version, banner, character sets, then the
+%% server compile time and runtime capabilities.
+decode_token(pro, Data) ->
+    {_Version, A} = take(2, Data),                  %server version, zero byte
+    B = case binary:match(A, <<0>>) of              %banner, null terminated
+        {Pos, 1} -> binary_part(A, Pos + 1, byte_size(A) - Pos - 1);
+        nomatch -> throw(incomplete)
+    end,
+    {_Charset, C} = take(3, B),                     %charset (little endian), flags
+    {<<NumElem:16/little>>, D} = take(2, C),
+    {_Elems, E} = take(NumElem * 5, D),
+    {<<FdoLength:16>>, F} = take(2, E),
+    {_Fdo, G} = take(FdoLength, F),
+    {CompileCaps, H} = take_len(G),
+    {RuntimeCaps, _} = take_len(H),
+    {CompileCaps, RuntimeCaps};
 decode_token(dcb, Data) ->
     A = decode_next(ub4,Data),
     Num = decode_ub4(A),

@@ -148,4 +148,21 @@ defmodule OraxTnsDecoderTest do
 
     assert {:ok, ^accumulator} = :orax_tns_decoder.decode_two_task(data, accumulator)
   end
+
+  # protocol response of Oracle AI Database 26ai Free 23.26.3 (after the message type)
+  @pro_26ai Base.decode16!(
+              "06007838365F36342F4C696E757820322E342E7878006903010A006603400301400366030166034803014803660301660352030152036603016603610301610366030166031F03081F0366030100640000006001240F050B0C030C0C0504050D0609070805050505050F05050505050A050505050504050607080823472347081123081141B0470083036907D003000000000000000000000000000000000000000000000000000000000000000000000000003706010101EF0F011B010101010101017FFF031003030101FF01FFFF010E0101FF01060CF6097F050FFF0D0B00FF030000000000070202040D0201000118007F010200000000"
+            )
+
+  test "the protocol response gives the server capabilities" do
+    {compile_caps, runtime_caps} = :orax_tns_decoder.decode_token(:pro, @pro_26ai)
+    assert byte_size(compile_caps) == 55
+    assert :binary.at(compile_caps, 7) == 27
+    assert runtime_caps == <<2, 1, 0, 1, 24, 0, 127, 1, 2, 0, 0, 0, 0>>
+  end
+
+  test "a protocol response cut short is incomplete" do
+    short = binary_part(@pro_26ai, 0, byte_size(@pro_26ai) - 20)
+    assert catch_throw(:orax_tns_decoder.decode_token(:pro, short)) == :incomplete
+  end
 end

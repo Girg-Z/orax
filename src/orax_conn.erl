@@ -208,8 +208,14 @@ redirect_data(_Length, _Data, State) ->
         Error -> Error
     end.
 
-handle_token(pro, State) ->
-    {ok, State2} = send_req(dty, State),
+%% The field version is the lower of the client's and the server's.
+handle_token({pro, {ServerCaps, _RuntimeCaps}}, State) ->
+    FieldVersion =
+    case ServerCaps of
+        <<_:?TNS_CCAP_FIELD_VERSION/binary, Version, _/binary>> -> min(?TNS_CCAP_FIELD_VERSION_MAX, Version);
+        _ -> ?TNS_CCAP_FIELD_VERSION_11_2
+    end,
+    {ok, State2} = send_req(dty, State#oraclient{field_version=FieldVersion}),
     handle_login(State2);
 handle_token(dty, #oraclient{eor=Eor} = State) ->
     {ok, State2} = send_req(sess, State),

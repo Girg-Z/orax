@@ -19,6 +19,11 @@
 -define(TNS_VERSION_MIN_END_OF_RESPONSE, 319).
 -define(TNS_ACCEPT_FLAG_HAS_END_OF_RESPONSE, 16#02000000).
 -define(TNS_CCAP_END_OF_RESPONSE, 16#20).
+%% compile time capabilities: indexes and values
+-define(TNS_CCAP_FIELD_VERSION, 7).
+-define(TNS_CCAP_TTC4, 40).
+-define(TNS_CCAP_FIELD_VERSION_11_2, 6).
+-define(TNS_CCAP_FIELD_VERSION_MAX, ?TNS_CCAP_FIELD_VERSION_11_2).  %highest the client asks for
 -define(TNS_DATA_FLAGS_EOF, 16#0040).
 -define(TNS_DATA_FLAGS_END_OF_RESPONSE, 16#2000).
 -define(TNS_MARKER_BREAK, 1).

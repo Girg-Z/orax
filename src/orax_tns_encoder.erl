@@ -137,19 +137,15 @@ encode_record(auth, #oraclient{env=EnvOpts,passwd=Passwd,req=Request,seq=Tseq}) 
     (encode_keyval("SESSION_CLIENT_VERSION", "186647296"))/binary
     >>,
     KeyConn};
-%% The compile time capabilities ask for the end of response marker (TTC4)
-%% only when the server offered it in the accept packet.
-encode_record(dty, #oraclient{charset=Charset,eor=Eor}) ->
+encode_record(dty, #oraclient{charset=Charset} = State) ->
+    Caps = compile_caps(State),
     <<
     ?TTI_DTY,
     (encode_ub2(Charset))/binary,                                              %cli in charset
     (encode_ub2(encode_helper(utf16, Charset)))/binary,                        %cli out charset
     1,
-    (case Eor of
-        offered -> <<41,6,1,0,0,106,1,1,6,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1,
-                  0,0,?TNS_CCAP_END_OF_RESPONSE>>;
-        _ -> <<38,6,1,0,0,106,1,1,6,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1>>
-    end)/binary,
+    (byte_size(Caps)),
+    Caps/binary,
     7,2,0,0,0,0,0,0,
     1,1,1,0,2,2,10,0,8,8,1,0,12,12,10,0,23,23,1,0,24,24,1,0,25,25,1,0,
     26,26,1,0,27,27,1,0,28,28,1,0,29,29,1,0,30,30,1,0,31,31,1,0,32,32,1,0,
@@ -294,6 +290,23 @@ encode_record(close, #oraclient{seq=Tseq}) ->
     ?TTI_FUN,
     ?TTI_LOGOFF, Tseq
     >>.
+
+%% The compile time capabilities, sent in the data types message: the
+%% negotiated field version, and the end of response marker (TTC4) only when
+%% the server offered it in the accept packet.
+compile_caps(#oraclient{eor=Eor, field_version=FieldVersion}) ->
+    Base = <<6,1,0,0,106,1,1,0,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1>>,
+    set_caps(Base, [{?TNS_CCAP_FIELD_VERSION, FieldVersion}] ++
+        [{?TNS_CCAP_TTC4, ?TNS_CCAP_END_OF_RESPONSE} || Eor =:= offered]).
+
+%% Sets the given capability bytes, growing the array with zeros as needed.
+set_caps(Caps, []) ->
+    Caps;
+set_caps(Caps, [{Index, Value}|Rest]) when Index >= byte_size(Caps) ->
+    set_caps(<<Caps/binary, 0:((Index - byte_size(Caps) + 1) * 8)>>, [{Index, Value}|Rest]);
+set_caps(Caps, [{Index, Value}|Rest]) ->
+    <<Head:Index/binary, _, Tail/binary>> = Caps,
+    set_caps(<<Head/binary, Value, Tail/binary>>, Rest).
 
 %% In SQL statements the server expects the values of LONG / LONG RAW binds
 %% (declared length above 4000) after all the other values of a row, while the
