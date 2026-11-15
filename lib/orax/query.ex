@@ -1,4 +1,4 @@
-defmodule Jamdb.Oracle.Query do
+defmodule Orax.Query do
   @moduledoc """
   Adapter module for Oracle. `DBConnection.Query` protocol implementation.
 
@@ -542,7 +542,7 @@ defmodule Jamdb.Oracle.Query do
     ["TO_CHAR(", expr(literal, sources, query), ?)]
   end
   defp expr(%Ecto.Query.Tagged{value: literal, type: type}, sources, query) do
-    ["CAST(", expr(literal, sources, query), " AS ", Jamdb.Oracle.SQL.to_db_type(type), ?)]
+    ["CAST(", expr(literal, sources, query), " AS ", Orax.SQL.to_db_type(type), ?)]
   end
 
   defp expr(nil, _sources, _query),   do: "NULL"
@@ -675,7 +675,7 @@ defmodule Jamdb.Oracle.Query do
   defp values_bind(idx, :binary),
     do: [?: | Integer.to_string(idx)]
   defp values_bind(idx, type),
-    do: ["CAST(:", Integer.to_string(idx), " AS ", Jamdb.Oracle.SQL.to_db_type(type), ?)]
+    do: ["CAST(:", Integer.to_string(idx), " AS ", Orax.SQL.to_db_type(type), ?)]
 
   defp create_alias(<<first, _rest::binary>>) when first in ?a..?z when first in ?A..?Z do
     <<first>>
@@ -707,7 +707,7 @@ defmodule Jamdb.Oracle.Query do
     quote_name(Atom.to_string(name))
   end
   defp quote_name(name) do
-    Jamdb.Oracle.SQL.quote_identifier(name)
+    Orax.SQL.quote_identifier(name)
   end
 
   defp quote_table(nil, name),    do: quote_table(name)
@@ -716,7 +716,7 @@ defmodule Jamdb.Oracle.Query do
   defp quote_table(name) when is_atom(name),
     do: quote_table(Atom.to_string(name))
   defp quote_table(name) do
-    Jamdb.Oracle.SQL.quote_identifier(name)
+    Orax.SQL.quote_identifier(name)
   end
 
   defp intersperse_map(list, separator, mapper, acc \\ [])
@@ -755,8 +755,8 @@ defmodule Jamdb.Oracle.Query do
   
 end
 
-defimpl String.Chars, for: Jamdb.Oracle.Query do
-  def to_string(%Jamdb.Oracle.Query{statement: statement}) do
+defimpl String.Chars, for: Orax.Query do
+  def to_string(%Orax.Query{statement: statement}) do
     IO.iodata_to_binary(statement)
   end
 end

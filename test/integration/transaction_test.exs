@@ -1,4 +1,4 @@
-defmodule Jamdb.Oracle.Integration.TransactionTest do
+defmodule Orax.Integration.TransactionTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
@@ -6,14 +6,14 @@ defmodule Jamdb.Oracle.Integration.TransactionTest do
   import Ecto.Query
 
   alias Ecto.Adapters.SQL.Sandbox
-  alias Jamdb.Oracle.Integration
-  alias Jamdb.Oracle.Integration.{OtherRepo, Repo, SandboxRepo}
+  alias Orax.Integration
+  alias Orax.Integration.{OtherRepo, Repo, SandboxRepo}
 
   defmodule Row do
     use Ecto.Schema
 
     @primary_key {:id, :id, autogenerate: false}
-    schema "jamdb_it_tx" do
+    schema "orax_it_tx" do
       field :name, :string
     end
   end
@@ -22,13 +22,13 @@ defmodule Jamdb.Oracle.Integration.TransactionTest do
     start_supervised!({Repo, Integration.config()})
     start_supervised!({OtherRepo, Integration.config()})
     start_supervised!({SandboxRepo, Integration.config(pool: Sandbox)})
-    Integration.drop_table(Repo, "jamdb_it_tx")
-    Repo.query!("CREATE TABLE jamdb_it_tx (id NUMBER(19) PRIMARY KEY, name VARCHAR2(50))")
+    Integration.drop_table(Repo, "orax_it_tx")
+    Repo.query!("CREATE TABLE orax_it_tx (id NUMBER(19) PRIMARY KEY, name VARCHAR2(50))")
 
     on_exit(fn ->
       Integration.with_repo(Repo, fn ->
-        Integration.drop_table(Repo, "jamdb_it_tx")
-        Integration.drop_table(Repo, "jamdb_it_tx_ddl")
+        Integration.drop_table(Repo, "orax_it_tx")
+        Integration.drop_table(Repo, "orax_it_tx_ddl")
       end)
     end)
 
@@ -36,7 +36,7 @@ defmodule Jamdb.Oracle.Integration.TransactionTest do
   end
 
   setup do
-    Repo.query!("DELETE FROM jamdb_it_tx")
+    Repo.query!("DELETE FROM orax_it_tx")
     :ok
   end
 
@@ -117,12 +117,12 @@ defmodule Jamdb.Oracle.Integration.TransactionTest do
   end
 
   test "DDL inside a transaction commits implicitly but rollback still works" do
-    Integration.drop_table(Repo, "jamdb_it_tx_ddl")
+    Integration.drop_table(Repo, "orax_it_tx_ddl")
 
     assert {:error, :rollback} =
              Repo.transaction(fn ->
                insert(Repo, 1)
-               Repo.query!("CREATE TABLE jamdb_it_tx_ddl (id NUMBER)")
+               Repo.query!("CREATE TABLE orax_it_tx_ddl (id NUMBER)")
                insert(Repo, 2)
                Repo.rollback(:rollback)
              end)

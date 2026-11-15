@@ -1,5 +1,5 @@
--module(jamdb_oracle).
--vsn("0.5.12").
+-module(orax).
+-vsn("0.1.0").
 -behaviour(gen_server).
 
 %% API
@@ -15,11 +15,11 @@
 -define(default_timeout, 5000).
 
 %% API
--spec start_link(jamdb_oracle_conn:options()) -> {ok, pid()} | {error, term()}.
+-spec start_link(orax_conn:options()) -> {ok, pid()} | {error, term()}.
 start_link(Opts) when is_list(Opts) ->
     gen_server:start_link(?MODULE, Opts, []).
 
--spec start(jamdb_oracle_conn:options()) -> {ok, pid()} | {error, term()}.
+-spec start(orax_conn:options()) -> {ok, pid()} | {error, term()}.
 start(Opts) when is_list(Opts) ->
     gen_server:start(?MODULE, Opts, []).
 
@@ -40,7 +40,7 @@ call_timeout(Tout) -> 2 * Tout + 1000.
 
 %% gen_server callbacks
 init(Opts) ->
-    case jamdb_oracle_conn:connect(Opts) of
+    case orax_conn:connect(Opts) of
         {ok, State} ->
             {ok, State};
         {ok, Result, _State} ->
@@ -53,7 +53,7 @@ init(Opts) ->
 %% timeout expired, the connection is still usable), local (a response did not
 %% decode, the connection is still usable).
 handle_call({sql_query, Query, Tout}, _From, State) ->
-    try jamdb_oracle_conn:sql_query(State, Query, Tout) of
+    try orax_conn:sql_query(State, Query, Tout) of
         {ok, Result, State2} ->
             {reply, {ok, Result}, State2};
         {error, Type, Reason, State2} ->
@@ -64,7 +64,7 @@ handle_call({sql_query, Query, Tout}, _From, State) ->
             {stop, normal, {error, socket, {Class, Reason, lists:sublist(Stack, 5)}}, State}
     end;
 handle_call(stop, _From, State) ->
-    try jamdb_oracle_conn:disconnect(State, 1) of
+    try orax_conn:disconnect(State, 1) of
         {ok, _Result} ->
             {stop, normal, ok, State}
     catch

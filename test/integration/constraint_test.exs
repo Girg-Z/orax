@@ -1,23 +1,23 @@
-defmodule Jamdb.Oracle.Integration.ConstraintTest do
+defmodule Orax.Integration.ConstraintTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
   import Ecto.Changeset
 
-  alias Ecto.Adapters.Jamdb.Oracle.Connection
+  alias Ecto.Adapters.Orax.Connection
   alias Ecto.Migration.{Constraint, Index, Reference}
-  alias Jamdb.Oracle.Integration
-  alias Jamdb.Oracle.Integration.Repo
+  alias Orax.Integration
+  alias Orax.Integration.Repo
 
   defmodule Parent do
     use Ecto.Schema
 
     @primary_key {:id, :id, autogenerate: false}
-    schema "jamdb_it_cparent" do
+    schema "orax_it_cparent" do
       field :code, :integer
       field :qty, :integer
-      has_many :children, Jamdb.Oracle.Integration.ConstraintTest.Child, foreign_key: :parent_id
+      has_many :children, Orax.Integration.ConstraintTest.Child, foreign_key: :parent_id
     end
   end
 
@@ -25,8 +25,8 @@ defmodule Jamdb.Oracle.Integration.ConstraintTest do
     use Ecto.Schema
 
     @primary_key {:id, :id, autogenerate: false}
-    schema "jamdb_it_cchild" do
-      belongs_to :parent, Jamdb.Oracle.Integration.ConstraintTest.Parent
+    schema "orax_it_cchild" do
+      belongs_to :parent, Orax.Integration.ConstraintTest.Parent
     end
   end
 
@@ -36,31 +36,31 @@ defmodule Jamdb.Oracle.Integration.ConstraintTest do
   end
 
   setup do
-    previous = Application.get_env(:jamdb_oracle, :quote_identifiers)
+    previous = Application.get_env(:orax, :quote_identifiers)
 
     on_exit(fn ->
       if previous == nil,
-        do: Application.delete_env(:jamdb_oracle, :quote_identifiers),
-        else: Application.put_env(:jamdb_oracle, :quote_identifiers, previous)
+        do: Application.delete_env(:orax, :quote_identifiers),
+        else: Application.put_env(:orax, :quote_identifiers, previous)
     end)
 
     :ok
   end
 
   defp create_tables(quoted?, unique_name) do
-    Application.put_env(:jamdb_oracle, :quote_identifiers, quoted?)
+    Application.put_env(:orax, :quote_identifiers, quoted?)
     drop_tables(quoted?)
     on_exit(fn -> drop_tables(quoted?) end)
 
     ddl = [
-      {:create, Ecto.Migration.table(:jamdb_it_cparent, primary_key: false),
+      {:create, Ecto.Migration.table(:orax_it_cparent, primary_key: false),
        [{:add, :id, :bigint, primary_key: true}, {:add, :code, :integer, []},
         {:add, :qty, :integer, []}]},
-      {:create, %Index{table: "jamdb_it_cparent", name: unique_name, columns: [:code], unique: true}},
-      {:create, %Constraint{table: "jamdb_it_cparent", name: "jamdb_it_qty_positive", check: qty_check(quoted?)}},
-      {:create, Ecto.Migration.table(:jamdb_it_cchild, primary_key: false),
+      {:create, %Index{table: "orax_it_cparent", name: unique_name, columns: [:code], unique: true}},
+      {:create, %Constraint{table: "orax_it_cparent", name: "orax_it_qty_positive", check: qty_check(quoted?)}},
+      {:create, Ecto.Migration.table(:orax_it_cchild, primary_key: false),
        [{:add, :id, :bigint, primary_key: true},
-        {:add, :parent_id, %Reference{table: "jamdb_it_cparent", type: :bigint}, []}]}
+        {:add, :parent_id, %Reference{table: "orax_it_cparent", type: :bigint}, []}]}
     ]
 
     for command <- ddl, sql <- Connection.execute_ddl(command) do
@@ -75,7 +75,7 @@ defmodule Jamdb.Oracle.Integration.ConstraintTest do
   defp qty_check(false), do: "qty > 0"
 
   defp drop_tables(quoted?) do
-    for table <- ~w(jamdb_it_cchild jamdb_it_cparent) do
+    for table <- ~w(orax_it_cchild orax_it_cparent) do
       Integration.drop_table(Repo, if(quoted?, do: ~s("#{table}"), else: table))
     end
   end
@@ -92,19 +92,19 @@ defmodule Jamdb.Oracle.Integration.ConstraintTest do
     assert {:error, changeset} =
              %Parent{}
              |> change(id: 1, code: 3, qty: 1)
-             |> unique_constraint(:id, name: :jamdb_it_cparent_pkey)
+             |> unique_constraint(:id, name: :orax_it_cparent_pkey)
              |> Repo.insert()
 
-    assert [id: {_, [constraint: :unique, constraint_name: "jamdb_it_cparent_pkey"]}] =
+    assert [id: {_, [constraint: :unique, constraint_name: "orax_it_cparent_pkey"]}] =
              changeset.errors
 
     assert {:error, changeset} =
              %Parent{}
              |> change(id: 4, code: 4, qty: -1)
-             |> check_constraint(:qty, name: :jamdb_it_qty_positive)
+             |> check_constraint(:qty, name: :orax_it_qty_positive)
              |> Repo.insert()
 
-    assert [qty: {_, [constraint: :check, constraint_name: "jamdb_it_qty_positive"]}] =
+    assert [qty: {_, [constraint: :check, constraint_name: "orax_it_qty_positive"]}] =
              changeset.errors
 
     assert {:error, changeset} =
@@ -113,7 +113,7 @@ defmodule Jamdb.Oracle.Integration.ConstraintTest do
              |> foreign_key_constraint(:parent_id)
              |> Repo.insert()
 
-    assert [parent_id: {_, [constraint: :foreign, constraint_name: "jamdb_it_cchild_parent_id_fkey"]}] =
+    assert [parent_id: {_, [constraint: :foreign, constraint_name: "orax_it_cchild_parent_id_fkey"]}] =
              changeset.errors
 
     assert {:error, changeset} =
@@ -125,17 +125,17 @@ defmodule Jamdb.Oracle.Integration.ConstraintTest do
              |> no_assoc_constraint(:children)
              |> Repo.delete()
 
-    assert [children: {_, [constraint: :no_assoc, constraint_name: "jamdb_it_cchild_parent_id_fkey"]}] =
+    assert [children: {_, [constraint: :no_assoc, constraint_name: "orax_it_cchild_parent_id_fkey"]}] =
              changeset.errors
   end
 
   test "constraint violations become changeset errors with unquoted identifiers" do
-    create_tables(false, "jamdb_it_cparent_code_uq")
-    assert_constraint_errors("jamdb_it_cparent_code_uq")
+    create_tables(false, "orax_it_cparent_code_uq")
+    assert_constraint_errors("orax_it_cparent_code_uq")
   end
 
   test "constraint violations keep the name case with quoted identifiers" do
-    create_tables(true, "jamdb_it_cParent_Code_uq")
-    assert_constraint_errors("jamdb_it_cParent_Code_uq")
+    create_tables(true, "orax_it_cParent_Code_uq")
+    assert_constraint_errors("orax_it_cParent_Code_uq")
   end
 end

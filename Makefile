@@ -1,3 +1,3 @@
-PROJECT = jamdb_oracle
+PROJECT = orax
 
 include erlang.mk

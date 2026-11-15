@@ -1,0 +1,9 @@
+-define(ConnOpts, [
+	{host, "localhost"},
+	{port, 1521},
+	{user, "oraxtest"},
+	{password, "oraxtest"},
+	{sid, "ORAXTEST"},
+%%	{service_name, "ORAXTEST"},
+	{app_name, "oraxtest"}
+]).

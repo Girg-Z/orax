@@ -1,12 +1,12 @@
-defmodule Ecto.Adapters.Jamdb.Oracle do
+defmodule Ecto.Adapters.Orax do
   @moduledoc """
   Adapter module for Oracle. `Ecto.Adapters.SQL` callbacks implementation.
 
-  It uses `jamdb_oracle` for communicating to the database.
+  It uses `orax` for communicating to the database.
 
   """
 
-  use Ecto.Adapters.SQL, driver: Jamdb.Oracle, migration_lock: nil
+  use Ecto.Adapters.SQL, driver: Orax, migration_lock: nil
 
   @impl true
   def insert(adapter_meta, schema_meta, params, on_conflict, returning, opts) do
@@ -82,7 +82,7 @@ defmodule Ecto.Adapters.Jamdb.Oracle do
 
   @impl true
   def ensure_all_started(config, type) do
-    Ecto.Adapters.SQL.ensure_all_started(:jamdb_oracle, config, type)
+    Ecto.Adapters.SQL.ensure_all_started(:orax, config, type)
   end
 
   @impl true
@@ -119,10 +119,10 @@ defmodule Ecto.Adapters.Jamdb.Oracle do
   defp float_decode(%Decimal{} = decimal), do: {:ok, Decimal.to_float(decimal)}
   defp float_decode(x), do: {:ok, x}
 
-  defp json_decode(x) when is_binary(x), do: {:ok, Jamdb.Oracle.json_library().decode!(x)}
+  defp json_decode(x) when is_binary(x), do: {:ok, Orax.json_library().decode!(x)}
   defp json_decode(x), do: {:ok, x}
 
-  defp array_decode(x) when is_binary(x), do: {:ok, Jamdb.Oracle.to_list(x)}
+  defp array_decode(x) when is_binary(x), do: {:ok, Orax.to_list(x)}
   defp array_decode(x), do: {:ok, x}
 
   @impl true
@@ -135,14 +135,14 @@ defmodule Ecto.Adapters.Jamdb.Oracle do
 
 end
 
-defmodule Ecto.Adapters.Jamdb.Oracle.Connection do
+defmodule Ecto.Adapters.Orax.Connection do
   @moduledoc false
 
   @behaviour Ecto.Adapters.SQL.Connection
 
   @impl true
   def child_spec(opts) do
-    DBConnection.child_spec(Jamdb.Oracle, opts)
+    DBConnection.child_spec(Orax, opts)
   end
 
   @impl true
@@ -182,7 +182,7 @@ defmodule Ecto.Adapters.Jamdb.Oracle.Connection do
   end
 
   defp query!(sql, name, opts) when is_binary(sql) or is_list(sql) do
-    %Jamdb.Oracle.Query{statement: IO.iodata_to_binary(sql), name: name, batch: opts[:batch]}
+    %Orax.Query{statement: IO.iodata_to_binary(sql), name: name, batch: opts[:batch]}
   end
   defp query!(%{} = query, _name, _opts) do
     query
@@ -193,25 +193,25 @@ defmodule Ecto.Adapters.Jamdb.Oracle.Connection do
   end
 
   @impl true
-  defdelegate all(query), to: Jamdb.Oracle.Query
+  defdelegate all(query), to: Orax.Query
   @impl true
-  defdelegate update_all(query), to: Jamdb.Oracle.Query
+  defdelegate update_all(query), to: Orax.Query
   @impl true
-  defdelegate delete_all(query), to: Jamdb.Oracle.Query
+  defdelegate delete_all(query), to: Orax.Query
   @impl true
   defdelegate insert(prefix, table, header, rows, on_conflict, returning, placeholders,
-    opts \\ []), to: Jamdb.Oracle.Query
+    opts \\ []), to: Orax.Query
   @impl true
-  defdelegate update(prefix, table, fields, filters, returning), to: Jamdb.Oracle.Query
+  defdelegate update(prefix, table, fields, filters, returning), to: Orax.Query
   @impl true
-  defdelegate delete(prefix, table, filters, returning), to: Jamdb.Oracle.Query
+  defdelegate delete(prefix, table, filters, returning), to: Orax.Query
   @impl true
-  defdelegate table_exists_query(table), to: Jamdb.Oracle.SQL
+  defdelegate table_exists_query(table), to: Orax.SQL
   @impl true
-  defdelegate execute_ddl(command), to: Jamdb.Oracle.SQL
+  defdelegate execute_ddl(command), to: Orax.SQL
   @impl true
-  defdelegate ddl_logs(result), to: Jamdb.Oracle.SQL
+  defdelegate ddl_logs(result), to: Orax.SQL
   @impl true
-  defdelegate to_constraints(err, opts), to: Jamdb.Oracle.SQL
+  defdelegate to_constraints(err, opts), to: Orax.SQL
 
 end

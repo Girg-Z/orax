@@ -1,9 +1,9 @@
-defmodule Jamdb.Oracle do
-  @vsn "0.5.12"
+defmodule Orax do
+  @vsn "0.1.0"
   @moduledoc """
   Adapter module for Oracle. `DBConnection` behaviour implementation.
 
-  It uses `jamdb_oracle` for communicating to the database.
+  It uses `orax` for communicating to the database.
 
   """
 
@@ -17,7 +17,7 @@ defmodule Jamdb.Oracle do
   @doc """
   Starts and links to a database connection process.
 
-  See [`Ecto.Adapters.Jamdb.Oracle`](Ecto.Adapters.Jamdb.Oracle.html#module-connection-options).
+  See [`Ecto.Adapters.Orax`](Ecto.Adapters.Orax.html#module-connection-options).
 
   By default the `DBConnection` starts a pool with a single connection.
   The size of the pool can be increased with `:pool_size`. The ping interval 
@@ -26,7 +26,7 @@ defmodule Jamdb.Oracle do
   @spec start_link(opts :: Keyword.t) :: 
     {:ok, pid()} | {:error, any()}
   def start_link(opts) do
-    DBConnection.start_link(Jamdb.Oracle, opts)
+    DBConnection.start_link(Orax, opts)
   end
 
   @doc """
@@ -62,7 +62,7 @@ defmodule Jamdb.Oracle do
 
   defp sql_query(pid, query, timeout) do
     try do
-      case :jamdb_oracle.sql_query(pid, query, timeout) do
+      case :orax.sql_query(pid, query, timeout) do
         {:ok, result} -> {:ok, result}
         {:error, type, err} -> {:error, type, err}
       end
@@ -78,20 +78,20 @@ defmodule Jamdb.Oracle do
   
   @impl true
   def connect(opts) do
-    host = opts[:hostname] |> Jamdb.Oracle.to_list
+    host = opts[:hostname] |> Orax.to_list
     port = opts[:port]
     timeout = opts[:timeout] || @timeout
     idle_interval = opts[:idle_interval] || @idle_interval
-    user = opts[:username] |> Jamdb.Oracle.to_list
-    password = opts[:password] |> Jamdb.Oracle.to_list
-    database = opts[:database] |> Jamdb.Oracle.to_list
+    user = opts[:username] |> Orax.to_list
+    password = opts[:password] |> Orax.to_list
+    database = opts[:database] |> Orax.to_list
     env = [host: host, port: port, user: user, password: password, timeout: timeout, idle_interval: idle_interval]
 	  ++ if( hd(database) == ?:, do: [sid: tl(database)], else: [service_name: database] )
     params = opts[:parameters] || []
     sock_opts = opts[:socket_options] || []
-    case :jamdb_oracle.start_link(sock_opts ++ params ++ env) do
+    case :orax.start_link(sock_opts ++ params ++ env) do
       {:ok, pid} ->
-        {:ok, %Jamdb.Oracle{pid: pid, mode: :idle, timeout: timeout, idle_interval: idle_interval,
+        {:ok, %Orax{pid: pid, mode: :idle, timeout: timeout, idle_interval: idle_interval,
           autocommit: Keyword.get(params, :autocommit, 1)}}
       {:error, err} -> {:error, error!(err)}
     end
@@ -100,7 +100,7 @@ defmodule Jamdb.Oracle do
   @impl true
   def disconnect(_err, %{pid: pid}) do
     try do
-      :jamdb_oracle.stop(pid)
+      :orax.stop(pid)
     catch
       _, _ -> :error
     end
@@ -121,17 +121,17 @@ defmodule Jamdb.Oracle do
 
   @impl true
   def handle_execute(%{batch: true} = query, params, _opts, s) do
-    %Jamdb.Oracle.Query{statement: statement} = query
-    case query(s, {:batch, statement |> Jamdb.Oracle.to_list, params}, []) do
+    %Orax.Query{statement: statement} = query
+    case query(s, {:batch, statement |> Orax.to_list, params}, []) do
       {:ok, result} -> {:ok, query, result, s}
       {:error, err} -> {:error, error!(err), s}
       {:disconnect, err} -> {:disconnect, error!(err), s}
     end
   end
   def handle_execute(query, params, opts, s) do
-    %Jamdb.Oracle.Query{statement: statement} = query
+    %Orax.Query{statement: statement} = query
     returning = Enum.map(Keyword.get(opts, :out, []), fn elem -> {:out, elem} end)
-    case query(s, statement |> Jamdb.Oracle.to_list, Enum.concat(params, returning)) do
+    case query(s, statement |> Orax.to_list, Enum.concat(params, returning)) do
       {:ok, result} -> {:ok, query, out_rows(result, opts), s}
       {:error, err} -> {:error, error!(err), s}
       {:disconnect, err} -> {:disconnect, error!(err), s}
@@ -220,7 +220,7 @@ defmodule Jamdb.Oracle do
   defp autocommit(s, :on), do: handle_transaction("COMON", [], s)
 
   defp handle_transaction(statement, _opts, s) do
-    case query(s, statement |> Jamdb.Oracle.to_list) do
+    case query(s, statement |> Orax.to_list) do
       {:ok, result} -> {:ok, result, s}
       {:error, err} -> {:error, error!(err), s}
       {:disconnect, err} -> {:disconnect, error!(err), s}
@@ -234,8 +234,8 @@ defmodule Jamdb.Oracle do
 
   @impl true
   def handle_fetch(query, %{params: params}, _opts, %{cursors: nil} = s) do
-    %Jamdb.Oracle.Query{statement: statement} = query
-    case query(s, {:fetch, statement |> Jamdb.Oracle.to_list, params}) do
+    %Orax.Query{statement: statement} = query
+    case query(s, {:fetch, statement |> Orax.to_list, params}) do
       {:cont, {_, cursor, row_format, rows}} ->
         cursors = %{cursor: cursor, row_format: row_format, last_row: List.last(rows)}
         {:cont,  %{num_rows: length(rows), rows: rows}, %{s | cursors: cursors}}
@@ -305,13 +305,14 @@ defmodule Jamdb.Oracle do
 
   To customize the JSON library, include the following in your `config/config.exs`:
 
-      config :jamdb_oracle, :json_library, SomeJSONModule
+      config :orax, :json_library, SomeJSONModule
 
-  Defaults to [`Jason`](https://hexdocs.pm/jason)
+  Defaults to Elixir's built-in `JSON`. The module must provide `encode!/1`
+  and `decode!/1`, as `Jason` does.
   """
   @spec json_library() :: module()
   def json_library() do
-    Application.get_env(:jamdb_oracle, :json_library, Jason)
+    Application.get_env(:orax, :json_library, JSON)
   end
 
   @doc """
@@ -330,13 +331,13 @@ defmodule Jamdb.Oracle do
   end
 
   @doc false
-  defdelegate loaders(t, type), to: Ecto.Adapters.Jamdb.Oracle
+  defdelegate loaders(t, type), to: Ecto.Adapters.Orax
   @doc false
-  defdelegate dumpers(t, type), to: Ecto.Adapters.Jamdb.Oracle
+  defdelegate dumpers(t, type), to: Ecto.Adapters.Orax
 
 end
 
-defimpl DBConnection.Query, for: Jamdb.Oracle.Query do
+defimpl DBConnection.Query, for: Orax.Query do
 
   def parse(query, _), do: query
   def describe(query, _), do: query
@@ -393,9 +394,9 @@ defimpl DBConnection.Query, for: Jamdb.Oracle.Query do
   end
   defp encode(%Date{} = date), do: Date.to_erl(date)
   defp encode(%Ecto.Query.Tagged{value: elem, type: :binary}) when is_binary(elem), do: elem
-  defp encode(elem) when is_binary(elem), do: Jamdb.Oracle.to_list(elem)
+  defp encode(elem) when is_binary(elem), do: Orax.to_list(elem)
   defp encode(elem) when is_map(elem),
-    do: encode(Jamdb.Oracle.json_library().encode!(elem))
+    do: encode(Orax.json_library().encode!(elem))
   defp encode(elem), do: elem
 
   defp expr(list) when is_list(list) do

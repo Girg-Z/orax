@@ -7,7 +7,7 @@ erl_crash.dump
 ebin
 _build/
 logs/
-test/jamdb_oracle_test.hrl
+test/orax_test.hrl
 config/test.exs
 rel/example_project
 .concrete/DEV_MODE

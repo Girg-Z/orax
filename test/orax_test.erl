@@ -1,15 +1,15 @@
--module(jamdb_oracle_test).
+-module(orax_test).
 
--include("jamdb_oracle_test.hrl").
+-include("orax_test.hrl").
 
 -compile(export_all).
 
--define(query(ConnRef,Query), jamdb_oracle:sql_query(ConnRef,Query)).
+-define(query(ConnRef,Query), orax:sql_query(ConnRef,Query)).
 
 %% Test callbacks
 
 all() ->
-    {ok, ConnRef} = jamdb_oracle:start(?ConnOpts),
+    {ok, ConnRef} = orax:start(?ConnOpts),
     
     {ok, [{affected_rows,0}]} = 
     ?query(ConnRef, "create table t_number ( C_NUMBER NUMBER )"),
@@ -67,4 +67,4 @@ all() ->
     {ok, [{affected_rows,0}]} = 
     ?query(ConnRef, "drop table t_number"),
     
-    ok = jamdb_oracle:stop(ConnRef).
+    ok = orax:stop(ConnRef).

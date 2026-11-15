@@ -1,9 +1,9 @@
-defmodule Jamdb.Oracle.Integration.SlowResponseTest do
+defmodule Orax.Integration.SlowResponseTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
-  alias Jamdb.Oracle.Integration
+  alias Orax.Integration
 
   # Forwards a TCP connection to the database, holding back chunks coming
   # from the server so a response arrives with pauses in the middle of it.
@@ -35,9 +35,9 @@ defmodule Jamdb.Oracle.Integration.SlowResponseTest do
     end
   end
 
-  # read_timeout is ignored now; it is kept to show that a short one, which
-  # used to cut such responses, does no harm.
-  test "a response with pauses longer than read_timeout is read whole" do
+  # Responses are read until the protocol marks their end, so pauses between
+  # packets do not cut them short.
+  test "a response with pauses between packets is read whole" do
     config = Integration.config()
     {proxy_port, _proxy} = SlowProxy.start(config[:port], 100)
 
@@ -47,19 +47,18 @@ defmodule Jamdb.Oracle.Integration.SlowResponseTest do
       user: String.to_charlist(config[:username]),
       password: String.to_charlist(config[:password]),
       service_name: String.to_charlist(config[:database]),
-      timeout: 15_000,
-      read_timeout: 20
+      timeout: 15_000
     ]
 
-    {:ok, conn} = :jamdb_oracle.start(opts)
+    {:ok, conn} = :orax.start(opts)
 
     # About 80 KB, so the response spans several packets.
     sql = ~c"SELECT level, RPAD('x', 4000, 'x') FROM dual CONNECT BY level <= 20"
 
-    assert {:ok, [{:result_set, _, _, rows}]} = :jamdb_oracle.sql_query(conn, {sql, []}, 15_000)
+    assert {:ok, [{:result_set, _, _, rows}]} = :orax.sql_query(conn, {sql, []}, 15_000)
     assert length(rows) == 20
     assert Enum.all?(rows, fn [_level, value] -> length(value) == 4000 end)
 
-    :jamdb_oracle.stop(conn)
+    :orax.stop(conn)
   end
 end

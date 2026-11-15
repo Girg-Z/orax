@@ -1,4 +1,4 @@
-defmodule Jamdb.OracleBinaryTest do
+defmodule OraxBinaryTest do
   use ExUnit.Case, async: true
 
   import Ecto.Query
@@ -15,15 +15,15 @@ defmodule Jamdb.OracleBinaryTest do
     value = <<0, 255, 71, 71>>
 
     assert {:ok, tagged = %Ecto.Query.Tagged{value: ^value, type: :binary}} =
-             Ecto.Type.adapter_dump(Jamdb.Oracle, :binary, value)
+             Ecto.Type.adapter_dump(Orax, :binary, value)
 
-    query = %Jamdb.Oracle.Query{statement: "SELECT :1 FROM dual"}
+    query = %Orax.Query{statement: "SELECT :1 FROM dual"}
 
     assert DBConnection.Query.encode(query, [tagged], []) == [value]
   end
 
   test "keeps nil binary binds as nil" do
-    assert Ecto.Type.adapter_dump(Jamdb.Oracle, :binary, nil) == {:ok, nil}
+    assert Ecto.Type.adapter_dump(Orax, :binary, nil) == {:ok, nil}
   end
 
   test "preserves binary type in Ecto query binds" do
@@ -31,13 +31,13 @@ defmodule Jamdb.OracleBinaryTest do
     query = from(record in BinarySchema, where: record.payload == ^value, select: record.id)
 
     {planned, _cast_params, dump_params} =
-      Ecto.Adapter.Queryable.plan_query(:all, Jamdb.Oracle, query)
+      Ecto.Adapter.Queryable.plan_query(:all, Orax, query)
 
     assert [%Ecto.Query.Tagged{value: ^value, type: :binary}] = dump_params
-    assert IO.iodata_to_binary(Jamdb.Oracle.Query.all(planned)) ==
+    assert IO.iodata_to_binary(Orax.Query.all(planned)) ==
              "SELECT b0.id FROM binary_records b0 WHERE (b0.payload = :1)"
 
-    driver_query = %Jamdb.Oracle.Query{statement: "SELECT :1 FROM dual"}
+    driver_query = %Orax.Query{statement: "SELECT :1 FROM dual"}
     assert DBConnection.Query.encode(driver_query, dump_params, []) == [value]
   end
 end

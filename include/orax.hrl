@@ -1,10 +1,10 @@
 -ifndef(TNS_HRL).
 
 -include("TNS.hrl").
--include("jamdb_oracle_defaults.hrl").
+-include("orax_defaults.hrl").
 
--define(ENCODER, jamdb_oracle_tns_encoder).
--define(DECODER, jamdb_oracle_tns_decoder).
+-define(ENCODER, orax_tns_encoder).
+-define(DECODER, orax_tns_decoder).
 
 -type env() ::
     {host, string()} |
@@ -16,7 +16,6 @@
     {ssl, list()} |
     {socket_options, list()} |
     {timeout, non_neg_integer()} |
-    {read_timeout, non_neg_integer()} |       %ignored: responses end when the protocol says so
     {end_of_response, boolean()} |
     {autocommit, non_neg_integer()} |
     {fetch, non_neg_integer()} |

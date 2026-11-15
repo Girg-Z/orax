@@ -1,17 +1,18 @@
-defmodule Jamdb.Oracle.Integration do
+defmodule Orax.Integration do
   @moduledoc false
   # Real database tests are tagged :oracle and excluded by default.
   # Run them with `mix test --include oracle`; the connection is taken from
-  # JAMDB_ORACLE_TEST_{HOST,PORT,USER,PASSWORD,DATABASE} and defaults to the
-  # local Oracle Free container (system/JamdbTest1@127.0.0.1:1521/FREEPDB1).
+  # ORAX_TEST_{HOST,PORT,USER,PASSWORD,DATABASE} and defaults to the
+  # local Oracle Free container (orax_test/OraxTest1@127.0.0.1:1521/FREEPDB1,
+  # created by test/support/create_test_user.sql).
 
   def config(extra \\ []) do
     [
-      hostname: System.get_env("JAMDB_ORACLE_TEST_HOST", "127.0.0.1"),
-      port: String.to_integer(System.get_env("JAMDB_ORACLE_TEST_PORT", "1521")),
-      username: System.get_env("JAMDB_ORACLE_TEST_USER", "system"),
-      password: System.get_env("JAMDB_ORACLE_TEST_PASSWORD", "JamdbTest1"),
-      database: System.get_env("JAMDB_ORACLE_TEST_DATABASE", "FREEPDB1"),
+      hostname: System.get_env("ORAX_TEST_HOST", "127.0.0.1"),
+      port: String.to_integer(System.get_env("ORAX_TEST_PORT", "1521")),
+      username: System.get_env("ORAX_TEST_USER", "orax_test"),
+      password: System.get_env("ORAX_TEST_PASSWORD", "OraxTest1"),
+      database: System.get_env("ORAX_TEST_DATABASE", "FREEPDB1"),
       pool_size: 1,
       log: false
     ]
@@ -38,14 +39,14 @@ defmodule Jamdb.Oracle.Integration do
   end
 end
 
-defmodule Jamdb.Oracle.Integration.Repo do
-  use Ecto.Repo, otp_app: :jamdb_oracle, adapter: Ecto.Adapters.Jamdb.Oracle
+defmodule Orax.Integration.Repo do
+  use Ecto.Repo, otp_app: :orax, adapter: Ecto.Adapters.Orax
 end
 
-defmodule Jamdb.Oracle.Integration.OtherRepo do
-  use Ecto.Repo, otp_app: :jamdb_oracle, adapter: Ecto.Adapters.Jamdb.Oracle
+defmodule Orax.Integration.OtherRepo do
+  use Ecto.Repo, otp_app: :orax, adapter: Ecto.Adapters.Orax
 end
 
-defmodule Jamdb.Oracle.Integration.SandboxRepo do
-  use Ecto.Repo, otp_app: :jamdb_oracle, adapter: Ecto.Adapters.Jamdb.Oracle
+defmodule Orax.Integration.SandboxRepo do
+  use Ecto.Repo, otp_app: :orax, adapter: Ecto.Adapters.Orax
 end

@@ -1,10 +1,11 @@
-defmodule Jamdb.Oracle.Mixfile do
+defmodule Orax.MixProject do
   use Mix.Project
 
   def project do
-    [app: :jamdb_oracle,
-     version: "0.5.12",
-     elixir: "~> 1.11",
+    [app: :orax,
+     version: "0.1.0",
+     elixir: "~> 1.18",
+     test_ignore_filters: [&String.starts_with?(&1, "test/support/")],
      description: description(),
      package: package(),
      deps: deps()]
@@ -18,18 +19,18 @@ defmodule Jamdb.Oracle.Mixfile do
 
   defp deps do
     [
-      {:ecto_sql, "~> 3.12"}
+      {:ecto_sql, "~> 3.14"}
     ]
   end
 
   defp description do
-    "Erlang driver and Ecto adapter for Oracle"
+    "Native Erlang driver and Ecto adapter for Oracle Database 19c and 26ai"
   end
 
   defp package do
-    [files: ["src","include","lib","mix.exs"],
-    maintainers: ["Mykhailo Vstavskyi","Sergiy Kostyushkin"],
+    [files: ["src", "include", "lib", "mix.exs", "README.md", "CHANGELOG.md", "LICENSE"],
+    maintainers: ["Giorgio Zanchetti"],
     licenses: ["MIT"],
-    links: %{"Github" => "https://github.com/erlangbureau/jamdb_oracle"}]
+    links: %{"Github" => "https://github.com/Girg-Z/orax"}]
   end
 end

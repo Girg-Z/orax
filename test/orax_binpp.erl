@@ -1,4 +1,4 @@
--module(jamdb_oracle_binpp).
+-module(orax_binpp).
 
 -export([pprint/1, pprint/2, pprint/3]).
 

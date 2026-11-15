@@ -1,18 +1,18 @@
-defmodule Jamdb.OracleTnsEncoderTest do
+defmodule OraxTnsEncoderTest do
   use ExUnit.Case, async: true
 
   require Record
 
   Record.defrecordp :oraclient,
-    Record.extract(:oraclient, from: "include/jamdb_oracle.hrl")
+    Record.extract(:oraclient, from: "include/orax.hrl")
   Record.defrecordp :format,
-    Record.extract(:format, from: "include/jamdb_oracle.hrl")
+    Record.extract(:format, from: "include/orax.hrl")
 
   @raw 23
   @long_raw 24
 
   defp oac_type(value) do
-    <<type, _rest::binary>> = :jamdb_oracle_tns_encoder.encode_token(:oac, value, format(charset: 871))
+    <<type, _rest::binary>> = :orax_tns_encoder.encode_token(:oac, value, format(charset: 871))
     type
   end
 
@@ -21,11 +21,11 @@ defmodule Jamdb.OracleTnsEncoderTest do
       oraclient(type: type, auto: 1, charset: 871, fetch: 10, seq: 1,
         req: {0, ~c"SELECT 1 FROM dual", binds, [], []})
 
-    :jamdb_oracle_tns_encoder.encode_record(:exec, record)
+    :orax_tns_encoder.encode_record(:exec, record)
   end
 
   # Encoded row data (TTI_RXD + values) for the given rows, in the given order.
-  defp rxd(rows), do: :jamdb_oracle_tns_encoder.encode_token(:rxd, rows, <<>>)
+  defp rxd(rows), do: :orax_tns_encoder.encode_token(:rxd, rows, <<>>)
 
   test "binary binds up to 4000 bytes are RAW, larger ones LONG RAW" do
     assert oac_type(<<1>>) == @raw
@@ -60,7 +60,7 @@ defmodule Jamdb.OracleTnsEncoderTest do
       oraclient(type: :change, auto: 1, charset: 871, fetch: 10, seq: 1,
         req: {0, ~c"INSERT INTO t VALUES (:1, :2)", [long, 1], [[long, 2]], []})
 
-    data = :jamdb_oracle_tns_encoder.encode_record(:exec, record)
+    data = :orax_tns_encoder.encode_record(:exec, record)
 
     assert String.ends_with?(data, rxd([[1, long], [2, long]]))
   end
