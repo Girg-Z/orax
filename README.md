@@ -270,8 +270,10 @@ orax:sql_query(Conn, {fetch, "SELECT * FROM t WHERE id > :1", [1]}).
 
 ### Character sets
 
-In Erlang, strings are charlists and binaries are `RAW` values. Text is UTF-8
-by default; the `:charset` parameter also accepts:
+In Erlang, text binds are binaries (or charlists) and `RAW` binds are
+`{raw, Bytes}`; text and `RAW` values come back as binaries, numbers as
+integers or floats and dates as `calendar` tuples. Text is UTF-8 by default;
+the `:charset` parameter also accepts:
 
 `:us7ascii`, `:we8iso8859p1`, `:ee8iso8859p2`, `:nee8iso8859p4`,
 `:cl8iso8859p5`, `:ar8iso8859p6`, `:el8iso8859p7`, `:iw8iso8859p8`,

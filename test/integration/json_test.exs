@@ -57,4 +57,12 @@ defmodule Orax.Integration.JsonTest do
     assert Repo.all(from d in Doc, order_by: d.id, select: d.meta["d"]["kind"]) ==
              ["single", "multi"]
   end
+
+  @tag skip: Integration.needs_ttc_23_4()
+  test "json arrays come back as lists" do
+    assert [%{"tags" => ["x", "y"]}, _] = Repo.all(from d in Doc, order_by: d.id, select: d.meta)
+
+    assert %{rows: [[[1, 2, 3], ["a"], %{"l" => [true, nil]}]]} =
+             Repo.query!(~s|SELECT JSON('[1,2,3]'), JSON('["a"]'), JSON('{"l":[true,null]}') FROM dual|)
+  end
 end

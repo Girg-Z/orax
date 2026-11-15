@@ -20,6 +20,11 @@ First release of orax, forked from
   * The `:read_timeout` parameter is removed. Responses are read until the
     protocol marks their end.
   * Autocommit is off inside `Repo.transaction/2` until COMMIT or ROLLBACK.
+  * The Erlang driver returns text and `RAW` values as binaries (charlists
+    before), numbers without the tuple around them, time zones, `INTERVAL
+    YEAR TO MONTH` values and error messages as binaries. Binary binds are
+    text; `RAW` binds are `{raw, Bytes}`. `Orax.Query` no longer turns lists
+    into binaries, so JSON arrays come back as lists.
 
 ### Protocol
 
@@ -39,6 +44,8 @@ First release of orax, forked from
     `{format, values}` tuples and BOOLEAN columns into `true`/`false` on 26ai.
   * Keep the sign of negative `INTERVAL DAY TO SECOND` values under a day.
   * Bind RAW values longer than 4000 bytes.
+  * A NULL bind takes the type of the first value of the rows that is not
+    NULL, as python-oracledb does.
   * The client character set defaults to AL32UTF8.
 
 ### Ecto adapter

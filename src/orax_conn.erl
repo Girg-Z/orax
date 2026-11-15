@@ -182,7 +182,7 @@ handle_login(Step, State) ->
                 Error -> Error
             end;
         {ok, ?TNS_REFUSE, _Flags, <<_Bin:16,_Length:16,Rest/bits>>, State2} ->
-            handle_error(local, binary_to_list(Rest), State2);
+            handle_error(local, Rest, State2);
         {ok, Type, _Flags, _Payload, State2} ->
             handle_error(socket, {unexpected_packet, Type}, State2);
         {error, timeout, State2} ->

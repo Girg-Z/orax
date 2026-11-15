@@ -296,9 +296,8 @@ defmodule Orax do
     end
   end
 
-  defp error!(msg) do
-    DBConnection.ConnectionError.exception("#{inspect msg}")
-  end
+  defp error!(msg) when is_binary(msg), do: DBConnection.ConnectionError.exception(msg)
+  defp error!(msg), do: DBConnection.ConnectionError.exception(inspect(msg))
 
   @doc """
   Returns the configured JSON library.
@@ -351,10 +350,8 @@ defimpl DBConnection.Query, for: Orax.Query do
   defp decode(row, mapper), do: mapper.(decode(row, nil))
 
   defp decode(:null), do: nil
-  defp decode({elem}) when is_number(elem), do: elem
   defp decode({date, time}) when is_tuple(date), do: to_naive({date, time})
   defp decode({date, time, tz}) when is_tuple(date), do: to_date({date, time, tz})
-  defp decode(elem) when is_list(elem), do: to_binary(elem)
   defp decode(elem), do: elem
 
   def encode(_, [], _), do: []
@@ -375,8 +372,8 @@ defimpl DBConnection.Query, for: Orax.Query do
   defp encode([elem | next1], [_type | next2]), do: [ elem | encode(next1, next2)]
 
   defp encode(nil), do: :null
-  defp encode(true), do: [49]
-  defp encode(false), do: [48]
+  defp encode(true), do: "1"
+  defp encode(false), do: "0"
   defp encode(%Decimal{} = decimal), do: Decimal.to_float(decimal)
   defp encode(%DateTime{microsecond: {0, 0}, utc_offset: utc_offset, zone_abbr: "UTC"} = datetime) do
     {date, {hour, min, sec}} = NaiveDateTime.to_erl(DateTime.to_naive(datetime))
@@ -393,30 +390,10 @@ defimpl DBConnection.Query, for: Orax.Query do
     {date, {hour, min, sec, ms}}
   end
   defp encode(%Date{} = date), do: Date.to_erl(date)
-  defp encode(%Ecto.Query.Tagged{value: elem, type: :binary}) when is_binary(elem), do: elem
-  defp encode(elem) when is_binary(elem), do: Orax.to_list(elem)
+  defp encode(%Ecto.Query.Tagged{value: elem, type: :binary}) when is_binary(elem), do: {:raw, elem}
   defp encode(elem) when is_map(elem),
-    do: encode(Orax.json_library().encode!(elem))
+    do: Orax.json_library().encode!(elem) |> IO.iodata_to_binary()
   defp encode(elem), do: elem
-
-  defp expr(list) when is_list(list) do
-    Enum.map(list, fn 
-      :null -> nil
-      elem  -> elem
-    end)
-  end
-
-  defp to_binary(list) when is_list(list) do
-    try do
-      :binary.list_to_bin(list)
-    rescue
-      ArgumentError ->
-        Enum.map(expr(list), fn
-          elem when is_list(elem) -> expr(elem)
-          other -> other
-        end) |> Enum.join
-    end
-  end
 
   defp to_naive({date, {hour, min, sec}}) when is_integer(sec),
     do: NaiveDateTime.from_erl!({date, {hour, min, sec}})
@@ -426,7 +403,7 @@ defimpl DBConnection.Query, for: Orax.Query do
   defp to_date({{year, month, day}, {hour, min, sec}, tz}),
     do: %DateTime{year: year, month: month, day: day, hour: hour, minute: min,
     second: trunc(sec), microsecond: parse_sec(sec), time_zone: "Etc/UTC",
-    zone_abbr: "UTC", utc_offset: parse_offset(IO.iodata_to_binary(tz)), std_offset: 0}
+    zone_abbr: "UTC", utc_offset: parse_offset(tz), std_offset: 0}
 
   defp parse_offset("Etc/UTC"), do: 0
   defp parse_offset(<<?+, hour::2-bytes, ?:, min::2-bytes, _rest::binary>>),

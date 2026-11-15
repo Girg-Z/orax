@@ -128,7 +128,7 @@ defmodule Orax.Integration.ProtocolTest do
   end
 
   defp assert_usable(conn) do
-    assert {:ok, [{:result_set, _, _, [[~c"ok"]]}]} =
+    assert {:ok, [{:result_set, _, _, [["ok"]]}]} =
              :orax.sql_query(conn, ~c"SELECT 'ok' FROM dual", 15_000)
   end
 
@@ -179,7 +179,7 @@ defmodule Orax.Integration.ProtocolTest do
 
         :atomics.put(flag, 1, 1)
 
-        assert {:ok, [{:result_set, _, _, [[~c"ok"]]}]} =
+        assert {:ok, [{:result_set, _, _, [["ok"]]}]} =
                  :orax.sql_query(conn, ~c"SELECT 'ok' FROM dual", 5_000)
 
         assert :atomics.get(flag, 1) == 3
@@ -197,7 +197,7 @@ defmodule Orax.Integration.ProtocolTest do
           {micros, result} = :timer.tc(fn -> :orax.sql_query(conn, sql, 15_000) end)
 
           assert {:ok, [{:result_set, _, _, [[x, y]]}]} = result
-          assert {length(x), length(y)} == {4000, min(n - 4000, 4000)}
+          assert {byte_size(x), byte_size(y)} == {4000, min(n - 4000, 4000)}
           assert micros < 300_000, "#{n}: #{div(micros, 1000)} ms"
         end
       end

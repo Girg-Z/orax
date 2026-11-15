@@ -1,6 +1,6 @@
 %% Decoding the bytes of Oracle values, after base/decoders.pyx of
 %% python-oracledb: NUMBER, BINARY_FLOAT/DOUBLE, DATE/TIMESTAMP and INTERVAL.
-%% The values keep the representation orax has always returned.
+%% Text (interval year to month, time zones) comes as binaries.
 -module(orax_values).
 
 -export([number/1, number/3, binary_float/1, date/1, interval/1, tz_offset/2]).
@@ -91,39 +91,41 @@ date(<<Data:7/binary,Ms:4/integer-unit:8>>) ->
     {D, {Hour,Min,Sec}} = date(Data),
     {D, {Hour,Min,Sec + Ms / 1.0e9}};
 date(<<Data:7/binary,Ms:4/integer-unit:8,H,M>>) when H =:= 0; M =:= 0 ->
-    erlang:append_element(date(<<Data/binary,Ms:32>>), tz_offset(0, 0));
+    erlang:append_element(date(<<Data/binary,Ms:32>>), zone(tz_offset(0, 0)));
 date(<<Data:7/binary,Ms:4/integer-unit:8,H,M>>) when H band ?TNS_HAS_REGION_ID =:= 0 ->
     Offset = (H - ?TZ_HOUR_OFFSET) * 3600 + (M - ?TZ_MINUTE_OFFSET) * 60,
     {D, {Hour,Min,Sec}} = shift(Data, Offset),
     erlang:append_element({D, {Hour,Min,Sec + Ms / 1.0e9}},
-        tz_offset(H - ?TZ_HOUR_OFFSET, M - ?TZ_MINUTE_OFFSET));
+        zone(tz_offset(H - ?TZ_HOUR_OFFSET, M - ?TZ_MINUTE_OFFSET)));
 date(<<Data:7/binary,Ms:4/integer-unit:8,H,M>>) ->
     case ((H band 127) bsl 6) + ((M band 252) bsr 2) of
         I when I > 0, I < 28 ->
             S = lists:nth(I, [0,14,13,12,11,10,9,8,7,6,5,4,3,2,1,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12]),
             {D, {Hour,Min,Sec}} = shift(Data, S * 3600),
-            erlang:append_element({D, {Hour,Min,Sec + Ms / 1.0e9}}, tz_offset(S, 0));
+            erlang:append_element({D, {Hour,Min,Sec + Ms / 1.0e9}}, zone(tz_offset(S, 0)));
         Zoneid ->
             erlang:append_element(date(<<Data:7/binary,Ms:4/integer-unit:8>>),
             case proplists:get_value(Zoneid, ?ZONEIDMAP) of
                 undefined -> {Zoneid};
-                {Region, Zone} -> lists:nth(Region, ?REGION)++"/"++Zone
+                {Region, Zone} -> zone(lists:nth(Region, ?REGION)++"/"++Zone)
             end)
     end.
+
+zone(Name) -> list_to_binary(Name).
 
 shift(Data, Offset) ->
     Secs = calendar:datetime_to_gregorian_seconds(date(Data)),
     calendar:gregorian_seconds_to_datetime(Secs + Offset).
 
-%% INTERVAL YEAR TO MONTH as "Y-M", INTERVAL DAY TO SECOND as
+%% INTERVAL YEAR TO MONTH as <<"Y-M">>, INTERVAL DAY TO SECOND as
 %% {Days, {Hours, Minutes, Seconds}}, negative when any field is.
 interval(<<Year:32,Mon>>) ->
-    lym(Year - ?TNS_DURATION_MID, Mon - ?TNS_DURATION_OFFSET);
+    list_to_binary(lym(Year - ?TNS_DURATION_MID, Mon - ?TNS_DURATION_OFFSET));
 interval(<<Day:32,Hour,Min,Sec,Ms:32>>) ->
     lds(Day - ?TNS_DURATION_MID, Hour - ?TNS_DURATION_OFFSET, Min - ?TNS_DURATION_OFFSET,
         Sec - ?TNS_DURATION_OFFSET, (Ms - ?TNS_DURATION_MID) / 1.0e9).
 
-%% A time zone offset as "+HH:MM".
+%% A time zone offset as "+HH:MM" (a string, also used in ALTER SESSION).
 tz_offset(I, M) when I < 0; M < 0 -> tz_offset(abs(I), abs(M), "-");
 tz_offset(I, M) -> tz_offset(I, M, "+").
 

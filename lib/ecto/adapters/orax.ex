@@ -86,7 +86,6 @@ defmodule Ecto.Adapters.Orax do
   end
 
   @impl true
-  def loaders({:array, _}, type), do: [&array_decode/1, type]
   def loaders({:embed, _}, type), do: [&json_decode/1, &Ecto.Type.embedded_load(type, &1, :json)]
   def loaders({:map, _}, type),   do: [&json_decode/1, &Ecto.Type.embedded_load(type, &1, :json)]
   def loaders(:map, type),        do: [&json_decode/1, type]
@@ -121,9 +120,6 @@ defmodule Ecto.Adapters.Orax do
 
   defp json_decode(x) when is_binary(x), do: {:ok, Orax.json_library().decode!(x)}
   defp json_decode(x), do: {:ok, x}
-
-  defp array_decode(x) when is_binary(x), do: {:ok, Orax.to_list(x)}
-  defp array_decode(x), do: {:ok, x}
 
   @impl true
   def lock_for_migrations(_meta, _opts, fun), do: fun.()

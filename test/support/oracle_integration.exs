@@ -26,6 +26,16 @@ defmodule Orax.Integration do
     |> Keyword.merge(extra)
   end
 
+  # A skip reason for the tests that need the types of the TTC field version
+  # of 23.4 (JSON, VECTOR, BOOLEAN) when a lower one is forced, false
+  # otherwise: `@tag skip: Orax.Integration.needs_ttc_23_4()`.
+  def needs_ttc_23_4 do
+    case field_version_parameters() do
+      [ttc_field_version: version] when version < 24 -> "needs TTC field version 24"
+      _ -> false
+    end
+  end
+
   defp field_version_parameters do
     case System.get_env("ORAX_TEST_TTC_FIELD_VERSION") do
       nil -> []

@@ -19,7 +19,7 @@ defmodule OraxBinaryTest do
 
     query = %Orax.Query{statement: "SELECT :1 FROM dual"}
 
-    assert DBConnection.Query.encode(query, [tagged], []) == [value]
+    assert DBConnection.Query.encode(query, [tagged], []) == [{:raw, value}]
   end
 
   test "keeps nil binary binds as nil" do
@@ -38,6 +38,6 @@ defmodule OraxBinaryTest do
              "SELECT b0.id FROM binary_records b0 WHERE (b0.payload = :1)"
 
     driver_query = %Orax.Query{statement: "SELECT :1 FROM dual"}
-    assert DBConnection.Query.encode(driver_query, dump_params, []) == [value]
+    assert DBConnection.Query.encode(driver_query, dump_params, []) == [{:raw, value}]
   end
 end

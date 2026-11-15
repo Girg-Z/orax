@@ -377,27 +377,30 @@ oac(#format{data_type=DataType0, data_length=BufferSize0, csfrm=Csfrm}, Version)
     >>.
 
 %% The metadata of a bind value (OracleMetadata.from_value with the sizes of
-%% _finalize_init): strings as VARCHAR and binaries as RAW of their length
-%% (the largest of the rows), numbers as NUMBER, dates as DATE, TIMESTAMP or
-%% TIMESTAMP WITH TIME ZONE. {out, Type} binds take the type of a value of
-%% that type.
+%% _finalize_init): text (binaries and strings) as VARCHAR and {raw, Bytes} as
+%% RAW, of their length (the largest of the rows), numbers as NUMBER, dates as
+%% DATE, TIMESTAMP or TIMESTAMP WITH TIME ZONE. {out, Type} binds take the
+%% type of a value of that type; null binds the type of the first value of
+%% the rows that is not null (VARCHAR when they all are).
 bind_format({out, Type}, Values) ->
     Format =
     case encode_helper(param, Type) of
         [] -> #format{data_type=?TNS_TYPE_VARCHAR, data_length=4000, max_size=4000, csfrm=?CS_FORM_IMPLICIT};
-        <<>> -> #format{data_type=?TNS_TYPE_RAW, data_length=4000};
+        {raw, <<>>} -> #format{data_type=?TNS_TYPE_RAW, data_length=4000};
         Value -> bind_format(Value, Values)
     end,
     Format#format{param=out};
 bind_format({in, Value}, Values) ->
     bind_format(Value, Values);
-bind_format(Value, Values) when is_list(Value); Value =:= null ->
-    case [V || V <- Values, is_list(V) orelse is_binary(V)] of
-        [] when Value =:= null -> varchar(1);
-        Strings -> varchar(lists:max([0|[byte_size(bin(V)) || V <- Strings]]))
+bind_format(null, Values) ->
+    case [V || V <- Values, V =/= null] of
+        [] -> varchar(1);
+        [Value|_] -> bind_format(Value, Values)
     end;
-bind_format(Value, Values) when is_binary(Value) ->
-    Size = lists:max([0|[byte_size(V) || V <- Values, is_binary(V)]]),
+bind_format(Value, Values) when is_binary(Value); is_list(Value) ->
+    varchar(lists:max([0|[byte_size(bin(V)) || V <- Values, is_list(V) orelse is_binary(V)]]));
+bind_format({raw, Value}, Values) when is_binary(Value) ->
+    Size = lists:max([0|[byte_size(V) || {raw, V} <- Values]]),
     #format{data_type=?TNS_TYPE_RAW, data_length=if Size =:= 0 -> 4000; true -> Size end};
 bind_format(Value, _Values) when is_number(Value) ->
     #format{data_type=?TNS_TYPE_NUMBER, data_length=22};
@@ -428,7 +431,7 @@ value_bytes(_Format, null) ->
     <<0>>;
 value_bytes(_Format, {in, Value}) ->
     value_bytes(_Format, Value);
-value_bytes(#format{data_type=?TNS_TYPE_RAW}, Value) when is_binary(Value) ->
+value_bytes(_Format, {raw, Value}) when is_binary(Value) ->
     raw_bytes_and_length(Value);
 value_bytes(_Format, Value) when is_list(Value); is_binary(Value) ->
     raw_bytes_and_length(bin(Value));
@@ -593,7 +596,7 @@ encode_helper(param, Data) ->
     {number, 0}, {integer, 0}, {float, 0}, {decimal, 0},
     {varchar, []}, {char, []}, {nvarchar, []}, {nchar, []}, {string, []}, {hexstring, []},
     {clob, clob}, {nclob, clob},
-    {raw, <<>>}, {blob, <<>>}, {binary, <<>>},
+    {raw, {raw, <<>>}}, {blob, {raw, <<>>}}, {binary, {raw, <<>>}},
     {date, {1900,1,1}}, {timestamp, {{1900,1,1}, {0,0,0,0}}}, {timestamptz, {{1900,1,1}, {0,0,0,0}, 0}}
     ],
     proplists:get_value(Data, Values, Data);

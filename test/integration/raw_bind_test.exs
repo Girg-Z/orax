@@ -181,4 +181,12 @@ defmodule Orax.Integration.RawBindTest do
 
     assert Repo.aggregate(Token, :count) == 2
   end
+
+  test "text and RAW values come back as binaries, binary binds are text" do
+    assert %{rows: [["é", "ñ", <<0, 255>>, "ab ", "ax"]]} =
+             Repo.query!(
+               "SELECT 'é', N'ñ', HEXTORAW('00FF'), CAST('ab' AS CHAR(3)), :1 || 'x' FROM dual",
+               ["a"]
+             )
+  end
 end

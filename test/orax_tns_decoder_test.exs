@@ -41,7 +41,7 @@ defmodule OraxTnsDecoderTest do
   # SELECT ... FOR UPDATE responses repeat the row header before every row.
   test "row headers between rows keep the rows already decoded" do
     assert {:ok, resp} = decode(rows_response(), fetch_resp([id_column()]))
-    assert rows(resp) == [[{1}], [{2}], [{3}]]
+    assert rows(resp) == [[1], [2], [3]]
   end
 
   test "columns left out by the bit vector repeat the previous row" do
@@ -51,7 +51,7 @@ defmodule OraxTnsDecoderTest do
 
     assert {:ok, resp} = decode(data, fetch_resp([id_column(), name_column()]))
     # the second row only sends NAME; the bit vector is not kept for the next row
-    assert rows(resp) == [[{1}, ~c"a"], [{1}, ~c"b"], [{2}, ~c"c"]]
+    assert rows(resp) == [[1, "a"], [1, "b"], [2, "c"]]
   end
 
   describe "packets" do
@@ -98,7 +98,7 @@ defmodule OraxTnsDecoderTest do
       assert {:more, {pending, resp}} =
                :orax_tns_decoder.decode_response(first, {<<>>, fetch_resp([id_column()])}, false)
 
-      assert rows(resp) == [[{1}], [{2}]]
+      assert rows(resp) == [[1], [2]]
       assert pending == binary_part(data, 24, 3)
     end
 
@@ -146,7 +146,7 @@ defmodule OraxTnsDecoderTest do
     assert {:ok, resp(error_num: 942, cursor_id: 7, error_message: msg, end_of_response: true)} =
              decode(data, fetch_resp([]))
 
-    assert msg == String.to_charlist(message)
+    assert msg == message
   end
 
   test "return parameters skip chunked keyword values" do

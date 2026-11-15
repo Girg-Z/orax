@@ -57,7 +57,7 @@ defmodule Orax.Integration.SlowResponseTest do
 
     assert {:ok, [{:result_set, _, _, rows}]} = :orax.sql_query(conn, {sql, []}, 15_000)
     assert length(rows) == 20
-    assert Enum.all?(rows, fn [_level, value] -> length(value) == 4000 end)
+    assert Enum.all?(rows, fn [_level, value] -> byte_size(value) == 4000 end)
 
     :orax.stop(conn)
   end

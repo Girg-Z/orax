@@ -207,8 +207,8 @@ error_info(Data, #resp{caps=Caps} = Resp) ->
     end,
     {Message, T} =
     case ErrorNum of
-        0 -> {[], S};
-        _ -> {Bin, Rest} = bytes(S), {to_list(Bin), Rest}
+        0 -> {<<>>, S};
+        _ -> bytes(S)
     end,
     CursorId2 = if CursorId =/= 0 -> CursorId; true -> Resp#resp.cursor_id end,
     {T, Resp#resp{call_status=CallStatus, cursor_id=CursorId2, error_num=ErrorNum,
@@ -514,19 +514,19 @@ value(Data, Format, _Resp) ->
 
 %% The values sent as bytes (read_oracle_data).
 oracle_data(Bin, #format{data_type=DataType}) when ?IS_BINARY_TYPE(DataType) ->
-    {orax_values:binary_float(Bin)};
+    orax_values:binary_float(Bin);
 oracle_data(<<Byte, _/binary>>, #format{data_type=?TNS_TYPE_BOOLEAN}) ->
     Byte =:= 1;
 oracle_data(Bin, #format{data_type=DataType, csfrm=Csfrm})
   when ?IS_CHAR_TYPE(DataType); ?IS_RAW_TYPE(DataType); ?IS_LONG_TYPE(DataType) ->
-    to_list(charset(Bin, Csfrm));
+    charset(Bin, Csfrm);
 oracle_data(Bin, #format{data_type=DataType}) when ?IS_DATE_TYPE(DataType) ->
     orax_values:date(Bin);
 oracle_data(Bin, #format{data_type=DataType}) when ?IS_INTERVAL_TYPE(DataType) ->
     orax_values:interval(Bin);
 oracle_data(Bin, #format{data_type=DataType, data_scale=Scale, data_precision=Precision})
   when ?IS_NUMBER_TYPE(DataType); DataType =:= ?TNS_TYPE_BINARY_INTEGER ->
-    {orax_values:number(Bin, Scale, Precision)};
+    orax_values:number(Bin, Scale, Precision);
 oracle_data(_Bin, #format{data_type=DataType}) ->
     error({data_type_not_supported, DataType}).
 
@@ -538,7 +538,7 @@ charset(Bin, _Csfrm) -> Bin.
 text(Data, Csfrm) ->
     case bytes(Data) of
         {null, Rest} -> {null, Rest};
-        {Bin, Rest} -> {to_list(charset(Bin, Csfrm)), Rest}
+        {Bin, Rest} -> {charset(Bin, Csfrm), Rest}
     end.
 
 %% A physical rowid: object, file, block and row in base 64.
@@ -559,13 +559,13 @@ urowid(Data) ->
                 {<<1, Rba:32, PartitionId:16, BlockNum:32, SlotNum:16, _/binary>>, Rest2} ->
                     {encode_rowid(Rba, PartitionId, BlockNum, SlotNum), Rest2};
                 {<<_, Logical/binary>> = Bin, Rest2} when byte_size(Bin) >= 13 ->
-                    {[$*|binary_to_list(base64:encode(Logical, #{padding => false}))], Rest2}
+                    {<<$*, (base64:encode(Logical, #{padding => false}))/binary>>, Rest2}
             end
     end.
 
 encode_rowid(Rba, PartitionId, BlockNum, SlotNum) ->
-    base64_digits(Rba, 6) ++ base64_digits(PartitionId, 3) ++
-        base64_digits(BlockNum, 6) ++ base64_digits(SlotNum, 3).
+    list_to_binary([base64_digits(Rba, 6), base64_digits(PartitionId, 3),
+                    base64_digits(BlockNum, 6), base64_digits(SlotNum, 3)]).
 
 base64_digits(N, Count) ->
     [lists:nth(((N bsr (6 * I)) band 63) + 1,
@@ -610,7 +610,7 @@ dbobject(Data) ->
     D = skip_ub2(C),                        %flags
     case Length of
         0 -> {null, D};
-        _ -> {Bin, E} = bytes(D), {to_list(Bin), E}
+        _ -> bytes(D)
     end.
 
 %% Helpers

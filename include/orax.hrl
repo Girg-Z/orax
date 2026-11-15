@@ -114,7 +114,7 @@
     call_status = 0,
     error_num = 0,
     error_pos = 0,
-    error_message = [],
+    error_message = <<>>,
     rowcount = 0,
     call_ended = false,     %status or error received
     flush_out_binds = false,

@@ -43,10 +43,17 @@ defmodule OraxTnsEncoderTest do
       assert format(data_length: 20) = :orax_tns_encoder.bind_format(~c"a", [~c"a", ~c"hello"])
     end
 
-    test "binaries are RAW of their length, numbers NUMBER" do
-      assert format(data_type: @raw, data_length: 5000) = bind_format(:binary.copy(<<1>>, 5000))
-      assert format(data_type: @raw, data_length: 4000) = bind_format(<<>>)
+    test "binaries are text, {:raw, bytes} RAW of their length, numbers NUMBER" do
+      assert format(data_type: @varchar, max_size: 3) = bind_format("abc")
+      assert format(data_type: @raw, data_length: 5000) = bind_format({:raw, :binary.copy(<<1>>, 5000)})
+      assert format(data_type: @raw, data_length: 4000) = bind_format({:raw, <<>>})
       assert format(data_type: @number, data_length: 22) = bind_format(42)
+    end
+
+    test "null takes the type of the first value of the rows that is not null" do
+      assert format(data_type: @number) = :orax_tns_encoder.bind_format(:null, [:null, 1])
+      assert format(data_type: @raw) = :orax_tns_encoder.bind_format(:null, [:null, {:raw, <<1>>}])
+      assert format(data_type: @varchar, data_length: 4) = :orax_tns_encoder.bind_format(:null, [:null])
     end
 
     test "out binds take the type asked for" do
