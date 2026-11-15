@@ -36,7 +36,7 @@ Add `orax` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:orax, "~> 0.1.0"}
+    {:orax, "~> 0.2.0"}
   ]
 end
 ```
