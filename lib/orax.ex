@@ -380,6 +380,10 @@ defimpl DBConnection.Query, for: Orax.Query do
   defp decode(row, mapper), do: mapper.(decode(row, nil))
 
   defp decode(:null), do: nil
+  defp decode({format, values} = vector) when format in [:float32, :float64, :int8] and is_list(values),
+    do: Orax.Vector.from_driver(vector)
+  defp decode({:binary, values} = vector) when is_binary(values), do: Orax.Vector.from_driver(vector)
+  defp decode({:sparse, _, _, _, _} = vector), do: Orax.Vector.from_driver(vector)
   defp decode({date, time}) when is_tuple(date), do: to_naive({date, time})
   defp decode({date, time, tz}) when is_tuple(date), do: to_date({date, time, tz})
   defp decode(elem), do: elem
@@ -421,6 +425,7 @@ defimpl DBConnection.Query, for: Orax.Query do
   end
   defp encode(%Date{} = date), do: Date.to_erl(date)
   defp encode(%Ecto.Query.Tagged{value: elem, type: :binary}) when is_binary(elem), do: {:raw, elem}
+  defp encode(%Orax.Vector{} = vector), do: Orax.Vector.to_driver(vector)
   defp encode(elem) when is_map(elem),
     do: Orax.json_library().encode!(elem) |> IO.iodata_to_binary()
   defp encode(elem), do: elem

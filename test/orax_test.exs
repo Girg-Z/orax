@@ -973,6 +973,12 @@ defmodule OraxTest do
     assert query == ~s{INSERT INTO prefix.schema VALUES (:1,:2)}
   end
 
+  test "insert of a row without fields is not supported" do
+    assert_raise ArgumentError, ~r/without fields is not supported by Oracle/, fn ->
+      insert(nil, "schema", [], [[]], {:raise, [], []}, [:id])
+    end
+  end
+
   test "insert with on_conflict other than :raise is not supported" do
     assert_raise ArgumentError, ~r/:on_conflict is not supported by Oracle/, fn ->
       insert(nil, "schema", [:x], [[:x]], {:nothing, [], []}, [])

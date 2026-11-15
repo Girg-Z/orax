@@ -102,6 +102,9 @@ defmodule Orax.Query do
     [all(query)]
   end
 
+  defp insert_all([[]], _counter),
+    do: error!(nil, "inserting a row without fields is not supported by Oracle (no DEFAULT VALUES)")
+
   defp insert_all([row], counter) do
     {row, _counter} = insert_each(row, counter)
     ["VALUES (", row, ?)]

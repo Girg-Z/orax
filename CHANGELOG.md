@@ -40,8 +40,11 @@ First release of orax, forked from
     decoded by a function of its own.
   * Fetch CLOB and BLOB columns as LONG and LONG RAW, so their content comes
     with the rows.
-  * Decode JSON (OSON) columns into maps and lists, VECTOR columns into
-    `{format, values}` tuples and BOOLEAN columns into `true`/`false` on 26ai.
+  * Decode JSON (OSON) columns into maps and lists and BOOLEAN columns into
+    `true`/`false` on 26ai.
+  * Bind and fetch VECTOR values in their binary form on 26ai (dense and
+    sparse, all formats), as `Orax.Vector` structs in Elixir with the
+    `Orax.Ecto.Vector` Ecto type; VECTOR binds before 23.4 are an error.
   * Keep the sign of negative `INTERVAL DAY TO SECOND` values under a day.
   * Bind RAW values longer than 4000 bytes.
   * A NULL bind takes the type of the first value of the rows that is not
@@ -57,7 +60,7 @@ First release of orax, forked from
     (one round trip, 19c and 26ai, `RETURNING` for every row) instead of a
     multi-row `VALUES`, which needs 23ai; a failing row inserts none of them.
     `:on_conflict` other than `:raise` raises an error instead of being
-    ignored. Batched `Repo.query/4` calls (`batch: true`) are atomic and
+    ignored, and so does inserting a row without fields. Batched `Repo.query/4` calls (`batch: true`) are atomic and
     take `:out` binds.
   * Translate `json_extract_path` to `JSON_VALUE`.
   * Add configurable identifier quoting (`config :orax, quote_identifiers: true`).

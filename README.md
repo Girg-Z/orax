@@ -197,9 +197,32 @@ config :orax, :json_library, Jason
 | `:date`           | `DATE`                               |
 | `:naive_datetime` | `DATE`, `TIMESTAMP`                  |
 | `:utc_datetime`   | `TIMESTAMP WITH TIME ZONE`           |
+| `Orax.Ecto.Vector` | `VECTOR` (23.4 and later)           |
 
 In migrations, `add :name, :string, national: true` creates an `NVARCHAR2`
 column, and `comment:` on tables and columns is supported.
+
+### Vectors
+
+`VECTOR` values are `Orax.Vector` structs, bound and fetched in their binary
+form (dense `FLOAT32`, `FLOAT64`, `INT8` and `BINARY` vectors, and sparse
+ones), so their size is not limited by the maximum string size:
+
+```elixir
+schema "docs" do
+  field :embedding, Orax.Ecto.Vector   # add :embedding, :"vector(1536, float32)"
+end
+
+Repo.insert!(%Doc{embedding: [0.1, 0.2, 0.3]})
+
+from d in Doc,
+  order_by: fragment("VECTOR_DISTANCE(?, ?, COSINE)", d.embedding, ^Orax.Vector.new(query)),
+  limit: 5
+```
+
+`VECTOR` binds need Oracle Database 23.4 or later; before it they are an
+error. In the Erlang driver vectors are `{float32 | float64 | int8, Values}`,
+`{binary, Bytes}` and `{sparse, Format, Dimensions, Indices, Values}`.
 
 ### insert_all
 
@@ -248,6 +271,7 @@ inserts.
 | `:date` | `DATE` |
 | `:timestamp` | `TIMESTAMP` |
 | `:timestamptz` | `TIMESTAMP WITH TIME ZONE` |
+| `:vector` | `VECTOR` |
 | `:cursor` | `SYS_REFCURSOR` |
 
 ## Using the Erlang driver

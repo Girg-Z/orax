@@ -137,6 +137,7 @@ defmodule Ecto.Adapters.Orax do
       type when type in [:time, :time_usec] -> :date
       type when type in [:naive_datetime, :naive_datetime_usec] -> :timestamp
       type when type in [:utc_datetime, :utc_datetime_usec] -> :timestamptz
+      :vector -> :vector
       :map -> :clob
       {:map, _} -> :clob
       type -> raise ArgumentError, "unsupported Oracle output type #{inspect(type)}"
