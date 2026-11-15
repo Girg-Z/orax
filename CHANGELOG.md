@@ -59,9 +59,11 @@ First release of orax, forked from
   * `insert_all` of several rows runs the single-row `INSERT` as array DML
     (one round trip, 19c and 26ai, `RETURNING` for every row) instead of a
     multi-row `VALUES`, which needs 23ai; a failing row inserts none of them.
-    `:on_conflict` other than `:raise` raises an error instead of being
-    ignored, and so does inserting a row without fields. Batched `Repo.query/4` calls (`batch: true`) are atomic and
-    take `:out` binds.
+  * `:on_conflict` other than `:raise`, in `insert` and `insert_all` alike,
+    raises an error instead of being ignored, and so does inserting a row
+    without fields.
+  * Batched `Repo.query/4` calls (`batch: true`) are atomic and take `:out`
+    binds.
   * Translate `json_extract_path` to `JSON_VALUE`.
   * Add configurable identifier quoting (`config :orax, quote_identifiers: true`).
   * Reject `select`, joins and CTEs in `update_all` and `delete_all`.

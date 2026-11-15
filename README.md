@@ -230,8 +230,11 @@ error. In the Erlang driver vectors are `{float32 | float64 | int8, Values}`,
 each of them in a single round trip (array DML), on 19c and 26ai alike, and
 `:returning` gives the values of every row. Rows that leave out different
 fields are inserted by one such batch for each run of rows of the same shape,
-in a transaction. A row that fails inserts none of the rows. `:on_conflict`
-is not supported (only `:raise`).
+in a transaction. A row that fails inserts none of the rows.
+
+`:on_conflict` is not supported, in `Repo.insert/2` as in `Repo.insert_all/3`:
+anything other than `:raise` raises an error. To ignore a duplicate, declare
+the constraint with `unique_constraint/3` and handle the error changeset.
 
 ## Raw SQL and PL/SQL
 
