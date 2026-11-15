@@ -25,7 +25,8 @@
     {newpassword, string()} |
     {proxy_user, string()} |
     {description, string()} |
-    {app_name, string()}.
+    {app_name, string()} |
+    {ttc_field_version, non_neg_integer()}.
 
 -record(oraclient, {
     socket = undefined,
@@ -50,6 +51,16 @@
     eor = false,        %the server marks the end of each response (offered: not asked yet)
     field_version = ?TNS_CCAP_FIELD_VERSION_11_2,  %TTC field version, negotiated with the server
     break = false       %recovering from a break: no new break on timeout
+}).
+
+%% The TTC capabilities negotiated with the server (see orax_caps).
+-record(caps, {
+    field_version = ?TNS_CCAP_FIELD_VERSION_MAX,  %highest the client asks for, then negotiated
+    server_field_version = 0,   %the one the server declares
+    server_compile_caps = <<>>,
+    server_runtime_caps = <<>>,
+    max_string_size = 4000,
+    end_of_response = false     %the server marks the end of each response
 }).
 
 -record(logon, {

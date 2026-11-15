@@ -18,12 +18,94 @@
 -define(TNS_VERSION_MIN_OOB_CHECK, 318).
 -define(TNS_VERSION_MIN_END_OF_RESPONSE, 319).
 -define(TNS_ACCEPT_FLAG_HAS_END_OF_RESPONSE, 16#02000000).
--define(TNS_CCAP_END_OF_RESPONSE, 16#20).
-%% compile time capabilities: indexes and values
+%% compile time capabilities (python-oracledb thin/constants.pxi): indexes
+-define(TNS_CCAP_SQL_VERSION, 0).
+-define(TNS_CCAP_LOGON_TYPES, 4).
+-define(TNS_CCAP_FEATURE_BACKPORT, 5).
 -define(TNS_CCAP_FIELD_VERSION, 7).
+-define(TNS_CCAP_SERVER_DEFINE_CONV, 8).
+-define(TNS_CCAP_DEQUEUE_WITH_SELECTOR, 9).
+-define(TNS_CCAP_TTC1, 15).
+-define(TNS_CCAP_OCI1, 16).
+-define(TNS_CCAP_TDS_VERSION, 17).
+-define(TNS_CCAP_RPC_VERSION, 18).
+-define(TNS_CCAP_RPC_SIG, 19).
+-define(TNS_CCAP_DBF_VERSION, 21).
+-define(TNS_CCAP_LOB, 23).
+-define(TNS_CCAP_TTC2, 26).
+-define(TNS_CCAP_UB2_DTY, 27).
+-define(TNS_CCAP_OCI2, 31).
+-define(TNS_CCAP_CLIENT_FN, 34).
+-define(TNS_CCAP_OCI3, 35).
+-define(TNS_CCAP_TTC3, 37).
+-define(TNS_CCAP_SESS_SIGNATURE_VERSION, 39).
 -define(TNS_CCAP_TTC4, 40).
+-define(TNS_CCAP_LOB2, 42).
+-define(TNS_CCAP_TTC5, 44).
+-define(TNS_CCAP_FEATURE_BACKPORT2, 45).
+-define(TNS_CCAP_VECTOR_FEATURES, 52).
+-define(TNS_CCAP_TTC6, 54).
+-define(TNS_CCAP_MAX, 55).
+%% compile time capabilities: values
+-define(TNS_CCAP_SQL_VERSION_MAX, 6).
 -define(TNS_CCAP_FIELD_VERSION_11_2, 6).
--define(TNS_CCAP_FIELD_VERSION_MAX, ?TNS_CCAP_FIELD_VERSION_11_2).  %highest the client asks for
+-define(TNS_CCAP_FIELD_VERSION_12_1, 7).
+-define(TNS_CCAP_FIELD_VERSION_12_2, 8).
+-define(TNS_CCAP_FIELD_VERSION_12_2_EXT1, 9).
+-define(TNS_CCAP_FIELD_VERSION_18_1, 10).
+-define(TNS_CCAP_FIELD_VERSION_18_1_EXT_1, 11).
+-define(TNS_CCAP_FIELD_VERSION_19_1, 12).
+-define(TNS_CCAP_FIELD_VERSION_19_1_EXT_1, 13).
+-define(TNS_CCAP_FIELD_VERSION_20_1, 14).
+-define(TNS_CCAP_FIELD_VERSION_21_1, 16).
+-define(TNS_CCAP_FIELD_VERSION_23_1, 17).
+-define(TNS_CCAP_FIELD_VERSION_23_1_EXT_1, 18).
+-define(TNS_CCAP_FIELD_VERSION_23_1_EXT_3, 20).
+-define(TNS_CCAP_FIELD_VERSION_23_4, 24).
+-define(TNS_CCAP_FIELD_VERSION_MAX, ?TNS_CCAP_FIELD_VERSION_23_4).
+-define(TNS_CCAP_O5LOGON, 8).
+-define(TNS_CCAP_O5LOGON_NP, 2).
+-define(TNS_CCAP_O7LOGON, 32).
+-define(TNS_CCAP_O8LOGON_LONG_IDENTIFIER, 64).
+-define(TNS_CCAP_O9LOGON_LONG_PASSWORD, 16#80).
+-define(TNS_CCAP_CTB_IMPLICIT_POOL, 16#08).
+-define(TNS_CCAP_CTB_OAUTH_MSG_ON_ERR, 16#10).
+-define(TNS_CCAP_END_OF_CALL_STATUS, 16#01).
+-define(TNS_CCAP_IND_RCD, 16#08).
+-define(TNS_CCAP_FAST_BVEC, 16#20).
+-define(TNS_CCAP_FAST_SESSION_PROPAGATE, 16#10).
+-define(TNS_CCAP_APP_CTX_PIGGYBACK, 16#80).
+-define(TNS_CCAP_TDS_VERSION_MAX, 3).
+-define(TNS_CCAP_RPC_VERSION_MAX, 7).
+-define(TNS_CCAP_RPC_SIG_VALUE, 3).
+-define(TNS_CCAP_DBF_VERSION_MAX, 1).
+-define(TNS_CCAP_LTXID, 16#08).
+-define(TNS_CCAP_IMPLICIT_RESULTS, 16#10).
+-define(TNS_CCAP_BIG_CHUNK_CLR, 16#20).
+-define(TNS_CCAP_KEEP_OUT_ORDER, 16#80).
+-define(TNS_CCAP_LOB_UB8_SIZE, 16#01).
+-define(TNS_CCAP_LOB_ENCS, 16#02).
+-define(TNS_CCAP_LOB_PREFETCH_DATA, 16#04).
+-define(TNS_CCAP_LOB_TEMP_SIZE, 16#08).
+-define(TNS_CCAP_LOB_PREFETCH_LENGTH, 16#40).
+-define(TNS_CCAP_LOB_12C, 16#80).
+-define(TNS_CCAP_LOB2_QUASI, 16#01).
+-define(TNS_CCAP_LOB2_2GB_PREFETCH, 16#04).
+-define(TNS_CCAP_ZLNP, 16#04).
+-define(TNS_CCAP_END_OF_RESPONSE, 16#20).
+-define(TNS_CCAP_CLIENT_FN_MAX, 12).
+-define(TNS_CCAP_VECTOR_SUPPORT, 16#08).
+-define(TNS_CCAP_TOKEN_SUPPORTED, 16#02).
+-define(TNS_CCAP_VECTOR_FEATURE_BINARY, 16#01).
+-define(TNS_CCAP_VECTOR_FEATURE_SPARSE, 16#02).
+-define(TNS_CCAP_OCI3_OCSSYNC, 16#20).
+%% runtime capabilities
+-define(TNS_RCAP_COMPAT, 0).
+-define(TNS_RCAP_TTC, 6).
+-define(TNS_RCAP_MAX, 13).
+-define(TNS_RCAP_COMPAT_81, 2).
+-define(TNS_RCAP_TTC_ZERO_COPY, 16#01).
+-define(TNS_RCAP_TTC_32K, 16#04).
 -define(TNS_DATA_FLAGS_EOF, 16#0040).
 -define(TNS_DATA_FLAGS_END_OF_RESPONSE, 16#2000).
 -define(TNS_MARKER_BREAK, 1).
@@ -58,6 +140,17 @@
 -define(TNS_TYPE_BDOUBLE, 101).
 -define(TNS_TYPE_ADT, 109).
 -define(TNS_TYPE_REF, 111).
+-define(TNS_TYPE_BINARY_INTEGER, 3).
+-define(TNS_TYPE_JSON, 119).
+-define(TNS_TYPE_VECTOR, 127).
+-define(TNS_TYPE_BOOLEAN, 252).
+
+%% Value encodings (base/constants.pxi).
+-define(TNS_DURATION_MID, 16#80000000).
+-define(TNS_DURATION_OFFSET, 60).
+-define(TZ_HOUR_OFFSET, 20).
+-define(TZ_MINUTE_OFFSET, 60).
+-define(TNS_HAS_REGION_ID, 16#80).
 
 -define(TTI_PRO, 1).    %protocol
 -define(TTI_DTY, 2).    %data types
@@ -78,6 +171,9 @@
 -define(TTI_FOB, 19).   %flush out binds
 -define(TTI_BVC, 21).   %bit vector
 -define(TTI_EOR, 29).   %end of response
+-define(TTI_SSPB, 23).   %server side piggyback
+-define(TTI_IMPLICIT, 27). %implicit result sets
+-define(TTI_TOKEN, 33). %token number
 
 -define(TTI_OPEN, 2).
 -define(TTI_EXEC, 4).
@@ -98,7 +194,7 @@
 -define(TTI_3LOGON, 81).
 -define(TTI_3LOGA, 82).
 -define(TTI_KOD, 92).
--define(TTI_ALL8, 94).
+-define(TTI_ALL8, 94).   %execute
 -define(TTI_LOBOPS, 96).
 -define(TTI_DNY, 98).
 -define(TTI_TXSE, 103).
@@ -114,3 +210,49 @@
 -define(TTI_SPFP, 138).
 -define(TTI_KPFC, 139).
 -define(TTI_PING, 147).
+
+%% Execute options and flags (thin/constants.pxi).
+-define(TNS_EXEC_OPTION_PARSE, 16#01).
+-define(TNS_EXEC_OPTION_BIND, 16#08).
+-define(TNS_EXEC_OPTION_DEFINE, 16#10).
+-define(TNS_EXEC_OPTION_EXECUTE, 16#20).
+-define(TNS_EXEC_OPTION_FETCH, 16#40).
+-define(TNS_EXEC_OPTION_COMMIT, 16#100).
+-define(TNS_EXEC_OPTION_PLSQL_BIND, 16#400).
+-define(TNS_EXEC_OPTION_NOT_PLSQL, 16#8000).
+-define(TNS_EXEC_FLAGS_IMPLICIT_RESULTSET, 16#8000).
+-define(TNS_MAX_LONG_LENGTH, 16#7fffffff).
+
+%% Binds and defines.
+-define(TNS_BIND_USE_INDICATORS, 16#01).
+-define(TNS_BIND_DIR_OUTPUT, 16).
+-define(TNS_BIND_DIR_INPUT, 32).
+-define(TNS_BIND_DIR_INPUT_OUTPUT, 48).
+-define(TNS_LOB_PREFETCH_FLAG, 16#2000000).
+-define(TNS_JSON_MAX_LENGTH, 32 * 1024 * 1024).
+-define(TNS_VECTOR_MAX_LENGTH, 1024 * 1024).
+-define(TNS_MAX_UROWID_LENGTH, 5267).
+-define(TNS_MAX_SHORT_LENGTH, 252).
+-define(TNS_CHUNK_SIZE, 32767).
+-define(TNS_LONG_LENGTH_INDICATOR, 254).
+-define(TNS_NULL_LENGTH_INDICATOR, 255).
+-define(TNS_ESCAPE_CHAR, 253).
+-define(TNS_UDS_FLAGS_IS_JSON, 16#100).
+-define(TNS_UDS_FLAGS_IS_OSON, 16#800).
+-define(TNS_CHARSET_UTF8, 873).
+-define(TNS_ENCODING_MULTI_BYTE, 16#01).
+-define(TNS_ENCODING_CONV_LENGTH, 16#02).
+-define(CS_FORM_IMPLICIT, 1).
+-define(CS_FORM_NCHAR, 2).
+
+%% Errors and server side piggybacks.
+-define(TNS_ERR_NO_DATA_FOUND, 1403).
+-define(TNS_SERVER_PIGGYBACK_QUERY_CACHE_INVALIDATION, 1).
+-define(TNS_SERVER_PIGGYBACK_OS_PID_MTS, 2).
+-define(TNS_SERVER_PIGGYBACK_TRACE_EVENT, 3).
+-define(TNS_SERVER_PIGGYBACK_SESS_RET, 4).
+-define(TNS_SERVER_PIGGYBACK_SYNC, 5).
+-define(TNS_SERVER_PIGGYBACK_LTXID, 7).
+-define(TNS_SERVER_PIGGYBACK_AC_REPLAY_CONTEXT, 8).
+-define(TNS_SERVER_PIGGYBACK_EXT_SYNC, 9).
+-define(TNS_SERVER_PIGGYBACK_SESS_SIGNATURE, 10).
