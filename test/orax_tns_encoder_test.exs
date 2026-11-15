@@ -67,7 +67,7 @@ defmodule OraxTnsEncoderTest do
     # the value based QLocator, then the VECTOR image.
     test "a vector is a QLocator and its image, as python-oracledb sends it" do
       vector = {:float32, [1.5, 2.0, -3.25]}
-      assert format(data_type: 127, data_length: 1_048_576) = bind_format(vector)
+      assert format(data_type: 127, data_length: 0) = bind_format(vector)
 
       assert :orax_tns_encoder.value_bytes(bind_format(vector), vector) ==
                Base.decode16!(

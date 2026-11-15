@@ -15,7 +15,7 @@ defmodule Orax.Integration.VectorTest do
     use Ecto.Schema
 
     schema "orax_it_vector" do
-      field :embedding, Orax.Ecto.Vector
+      field(:embedding, Orax.Ecto.Vector)
     end
   end
 
@@ -29,7 +29,9 @@ defmodule Orax.Integration.VectorTest do
         "PRIMARY KEY, embedding VECTOR(2048, FLOAT32))"
     )
 
-    Repo.query!("CREATE TABLE orax_it_vector_any (id NUMBER, v VECTOR, s VECTOR(10, FLOAT64, SPARSE))")
+    Repo.query!(
+      "CREATE TABLE orax_it_vector_any (id NUMBER, v VECTOR, s VECTOR(10, FLOAT64, SPARSE), t VARCHAR2(200))"
+    )
 
     on_exit(fn ->
       Integration.with_repo(Repo, fn ->
@@ -51,7 +53,10 @@ defmodule Orax.Integration.VectorTest do
 
   test "Ecto fields of 2048 dimensions are inserted and loaded" do
     doc = Repo.insert!(%Doc{embedding: embedding(1)})
-    assert %Doc{embedding: %Vector{format: :float32, dimensions: 2048} = loaded} = Repo.get!(Doc, doc.id)
+
+    assert %Doc{embedding: %Vector{format: :float32, dimensions: 2048} = loaded} =
+             Repo.get!(Doc, doc.id)
+
     assert Vector.to_list(loaded) == embedding(1)
     Repo.query!("INSERT INTO orax_it_vector (id, embedding) VALUES (:1, :2)", [-1, nil])
     assert %Doc{embedding: nil} = Repo.get!(Doc, -1)
@@ -65,7 +70,8 @@ defmodule Orax.Integration.VectorTest do
 
     nearest =
       from(d in Doc,
-        order_by: fragment("VECTOR_DISTANCE(?, ?, EUCLIDEAN)", d.embedding, ^Vector.new(embedding(2))),
+        order_by:
+          fragment("VECTOR_DISTANCE(?, ?, EUCLIDEAN)", d.embedding, ^Vector.new(embedding(2))),
         limit: 1,
         select: d.id
       )
@@ -89,8 +95,42 @@ defmodule Orax.Integration.VectorTest do
     assert Enum.map(rows, &hd/1) == vectors
 
     sparse = Vector.sparse(10, [1, 7], [0.5, -1.0], :float64)
+    Repo.query!("INSERT INTO orax_it_vector_any (s, id) VALUES (:1, :2)", [sparse, 8])
+    assert %{rows: [[^sparse]]} = Repo.query!("SELECT s FROM orax_it_vector_any WHERE id = 8")
     Repo.query!("INSERT INTO orax_it_vector_any (id, s) VALUES (:1, :2)", [9, sparse])
     assert %{rows: [[^sparse]]} = Repo.query!("SELECT s FROM orax_it_vector_any WHERE id = 9")
+  end
+
+  # A vector bind keeps its place among the others: it is not a long value.
+  test "vector binds may come before other binds" do
+    vector = Vector.new([1.0, 2.0, 3.0])
+    long_text = String.duplicate("Mozzarella Santa Lucia, 125 g ", 3)
+    Repo.query!("INSERT INTO orax_it_vector_any (v, id) VALUES (:1, :2)", [vector, 7])
+
+    Repo.query!(
+      "INSERT INTO orax_it_vector_any (id, v, s) VALUES (:1, :2, TO_VECTOR(:3, 10, FLOAT64, SPARSE))",
+      [8, vector, "[10,[0],[1.0]]"]
+    )
+
+    assert %{rows: [[7, ^vector], [8, ^vector]]} =
+             Repo.query!("SELECT id, v FROM orax_it_vector_any ORDER BY id")
+
+    assert %{rows: [[distance]]} =
+             Repo.query!(
+               "SELECT VECTOR_DISTANCE(v, :1, COSINE) FROM orax_it_vector_any WHERE id = :2",
+               [vector, 7]
+             )
+
+    assert abs(distance) < 1.0e-6
+
+    Repo.query!("INSERT INTO orax_it_vector_any (v, t, id) VALUES (:1, :2, :3)", [
+      vector,
+      long_text,
+      9
+    ])
+
+    assert %{rows: [[^vector, ^long_text]]} =
+             Repo.query!("SELECT v, t FROM orax_it_vector_any WHERE id = 9")
   end
 end
 
@@ -108,7 +148,9 @@ defmodule Orax.Integration.VectorSupportTest do
   end
 
   test "vector binds work from Oracle 23.4 and are not supported before" do
-    %{rows: [[version]]} = Repo.query!("BEGIN :1 := DBMS_DB_VERSION.VERSION; END;", [{:out, :integer}])
+    %{rows: [[version]]} =
+      Repo.query!("BEGIN :1 := DBMS_DB_VERSION.VERSION; END;", [{:out, :integer}])
+
     vector = Orax.Vector.new([1.0, 2.0, 3.0])
 
     if version >= 23 and Integration.needs_ttc_23_4() == false do

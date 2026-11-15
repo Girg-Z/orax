@@ -402,8 +402,10 @@ bind_format(Value, Values) when is_binary(Value); is_list(Value) ->
 bind_format({raw, Value}, Values) when is_binary(Value) ->
     Size = lists:max([0|[byte_size(V) || {raw, V} <- Values]]),
     #format{data_type=?TNS_TYPE_RAW, data_length=if Size =:= 0 -> 4000; true -> Size end};
+%% A VECTOR has no buffer size of its own (python's DB_TYPE_VECTOR): its oac
+%% says 1 MB, but it is not a long value and keeps its place in the row.
 bind_format(Value, _Values) when ?IS_VECTOR(Value) ->
-    #format{data_type=?TNS_TYPE_VECTOR, data_length=?TNS_VECTOR_MAX_LENGTH};
+    #format{data_type=?TNS_TYPE_VECTOR, data_length=0};
 bind_format(Value, _Values) when is_number(Value) ->
     #format{data_type=?TNS_TYPE_NUMBER, data_length=22};
 bind_format({{_,_,_}, {_,_,_,_}}, _Values) ->
