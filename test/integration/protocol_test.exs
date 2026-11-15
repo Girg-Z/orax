@@ -48,6 +48,60 @@ defmodule Orax.Integration.ProtocolTest do
     defp corrupt(data, _corrupt), do: data
   end
 
+  # Forwards a TCP connection to the database. When the flag is set, the
+  # next response of the server is held back behind a flush out binds
+  # message (without the end of response flag); the client's flush out binds
+  # request is dropped and the response is sent in its place, as a server
+  # would send the rest of it.
+  defmodule FlushOutBindsProxy do
+    def start(target_port) do
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+      {:ok, port} = :inet.port(listen)
+      flag = :atomics.new(1, [])
+      spawn_link(fn -> accept(listen, target_port, flag) end)
+      {port, flag}
+    end
+
+    defp accept(listen, target_port, flag) do
+      {:ok, client} = :gen_tcp.accept(listen)
+      {:ok, server} = :gen_tcp.connect(~c"127.0.0.1", target_port, [:binary, active: false])
+      responses = self()
+      spawn_link(fn -> requests(client, server, flag, responses) end)
+      responses(server, client, flag)
+    end
+
+    defp requests(client, server, flag, responses) do
+      case :gen_tcp.recv(client, 0) do
+        {:ok, <<11::32, 6, _, _::16, 0::16, 19>>} when is_pid(responses) ->
+          if :atomics.compare_exchange(flag, 1, 2, 3) == :ok, do: send(responses, :flushed)
+          requests(client, server, flag, responses)
+
+        {:ok, data} ->
+          :ok = :gen_tcp.send(server, data)
+          requests(client, server, flag, responses)
+
+        {:error, _} ->
+          :gen_tcp.close(server)
+      end
+    end
+
+    defp responses(server, client, flag) do
+      case :gen_tcp.recv(server, 0) do
+        {:ok, data} ->
+          if :atomics.compare_exchange(flag, 1, 1, 2) == :ok do
+            :ok = :gen_tcp.send(client, <<11::32, 6, 0, 0::16, 0::16, 19>>)
+            receive do: (:flushed -> :ok)
+          end
+
+          :ok = :gen_tcp.send(client, data)
+          responses(server, client, flag)
+
+        {:error, _} ->
+          :gen_tcp.close(client)
+      end
+    end
+  end
+
   defp opts(extra) do
     config = Integration.config()
 
@@ -113,6 +167,22 @@ defmodule Orax.Integration.ProtocolTest do
                  :orax.sql_query(conn, ~c"SELECT 1 FROM dual", 15_000)
 
         assert details[:message_type] == 0xEE
+        assert_usable(conn)
+      end
+
+      test "a flush out binds message is answered before the end of the response",
+           %{end_of_response: eor} do
+        config = Integration.config()
+        {proxy_port, flag} = FlushOutBindsProxy.start(config[:port])
+        {:ok, conn} = :orax.start(Keyword.put(opts(end_of_response: eor), :port, proxy_port))
+        on_exit(fn -> stop(conn) end)
+
+        :atomics.put(flag, 1, 1)
+
+        assert {:ok, [{:result_set, _, _, [[~c"ok"]]}]} =
+                 :orax.sql_query(conn, ~c"SELECT 'ok' FROM dual", 5_000)
+
+        assert :atomics.get(flag, 1) == 3
         assert_usable(conn)
       end
 

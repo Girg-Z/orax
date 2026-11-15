@@ -624,7 +624,9 @@ recv_packet(#oraclient{socket=Socket, buf=Buf, version=Version, timeouts={_Tout,
 %% Without the end of response marker, the response ends with the message that
 %% ends the call (error/status, as python-oracledb does); with it, the packets
 %% are read up to the marked one even when the call ended before, so the next
-%% call starts on a fresh response.
+%% call starts on a fresh response. A flush out binds message ends the part
+%% of the response sent so far either way (python-oracledb's Protocol.
+%% _process_message): the rest comes after the client asks for it.
 recv_resp(Acc, State) ->
     recv_resp({decoding, {<<>>, Acc}}, Acc, State).
 
@@ -656,6 +658,9 @@ resp_packet(?TNS_DATA, <<DataFlags:16, Body/binary>>, Loop, Acc, #oraclient{eor=
     end,
     case Loop2 of
         {decoding, _Cont} -> recv_resp(Loop2, Acc, State);
+        %% the server waits for the flush out binds request before sending
+        %% the rest of the response: no end marker comes before it
+        {decoded, #resp{flush_out_binds=true} = Flushed} -> {ok, Flushed, State};
         _ when Eor, not End -> recv_resp(Loop2, Acc, State);
         {decoded, Result2} -> {ok, Result2, State};
         {failed, Reason2} -> decode_failed(Reason2, State)
