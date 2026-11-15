@@ -274,8 +274,11 @@ unzip([{X, Y} | Ts], Xs, Ys) -> unzip(Ts, [X | Xs], [Y | Ys]);
 unzip([], Xs, Ys) -> {Ys, Ys ++ Xs}.
 
 send_req(login, State) ->
-    Data = get_record(login, State, [], 0),
-    send(State, ?TNS_CONNECT, Data);
+    {Connect, Data} = get_record(login, State, [], 0),
+    case send(State, ?TNS_CONNECT, Connect) of
+        {ok, State2} -> send(State2, ?TNS_DATA, Data);
+        Error -> Error
+    end;
 send_req(auth, #oraclient{req=Request,seq=Task} = State) ->
     {Data, KeyConn} = get_record(auth, State, Request, Task),
     send(State#oraclient{auth=KeyConn,req=[]}, ?TNS_DATA, Data);

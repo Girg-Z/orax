@@ -11,6 +11,7 @@
 -define(TNS_ATTENTION, 13).
 -define(TNS_CONTROL, 14).
 -define(TNS_MAX, 19).
+-define(TNS_MAX_CONNECT_DATA, 230).  %longer connect data goes in a data packet of its own
 
 -define(TNS_VERSION_DESIRED, 319).
 -define(TNS_VERSION_MIN_LARGE_SDU, 315).

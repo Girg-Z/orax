@@ -64,4 +64,28 @@ defmodule OraxTnsEncoderTest do
 
     assert String.ends_with?(data, rxd([[1, long], [2, long]]))
   end
+
+  defp login(desc), do: :orax_tns_encoder.encode_record(:login, oraclient(sdu: 8192, auth: desc))
+
+  test "connect data up to 230 bytes stays in the connect packet" do
+    desc = ~c"(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=" ++ List.duplicate(?a, 230 - 44) ++ ~c")))"
+    assert length(desc) == 230
+
+    {connect, rest} = login(desc)
+    assert rest == <<>>
+    assert <<_::binary-size(16), 230::16, 74::16, _::binary>> = connect
+    assert byte_size(connect) == 74 - 8 + 230
+    assert String.ends_with?(connect, List.to_string(desc))
+  end
+
+  test "connect data over 230 bytes goes in a data packet after the connect packet" do
+    desc = ~c"(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=" ++ List.duplicate(?a, 231 - 44) ++ ~c")))"
+    assert length(desc) == 231
+
+    {connect, data} = login(desc)
+    assert data == List.to_string(desc)
+    # the header still declares the whole connect data length and its offset
+    assert <<_::binary-size(16), 231::16, 74::16, _::binary>> = connect
+    assert byte_size(connect) == 74 - 8
+  end
 end

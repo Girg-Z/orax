@@ -52,9 +52,12 @@ encode_record(description, EnvOpts) ->
     ")(HOST="++Host++")(PORT="++integer_to_list(Port)++")))");
 %% Version 319 lets 23ai and later servers mark the end of each response;
 %% from 315 on, packet lengths take 32 bits and the SDU is sent in 32 bits too.
+%% Returns the connect packet body and the connect data to send after it in a
+%% data packet: the server takes at most 230 bytes of connect data inside the
+%% connect packet (the header still declares the whole length).
 encode_record(login, #oraclient{env=EnvOpts,sdu=Sdu,auth=Desc}) ->
     Data = if Desc =/= [] -> encode_str(Desc); true -> encode_record(description, EnvOpts) end,
-    <<
+    Connect = <<
     ?TNS_VERSION_DESIRED:16, % Packet version number
     1,57,                    % Lowest compatible version number
     0,0,                     % Global service options supported
@@ -71,9 +74,12 @@ encode_record(login, #oraclient{env=EnvOpts,sdu=Sdu,auth=Desc}) ->
     Sdu:32,                  % SDU (large)
     Sdu:32,                  % TDU (large)
     0:32,                    % Connect flags 1
-    0:32,                    % Connect flags 2
-    Data/binary
-    >>;
+    0:32                     % Connect flags 2
+    >>,
+    case byte_size(Data) > ?TNS_MAX_CONNECT_DATA of
+        true -> {Connect, Data};
+        false -> {<<Connect/binary, Data/binary>>, <<>>}
+    end;
 encode_record(sess, #oraclient{env=EnvOpts,seq=Tseq}) ->
     {ok, UserHost}  = inet:gethostname(),
     UserPID         = os:getpid(),
