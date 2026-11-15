@@ -20,7 +20,7 @@ defmodule Orax.MixProject do
 
   def application do
     [
-      extra_applications: [:crypto, :public_key]
+      extra_applications: [:crypto, :public_key, :ssl]
     ]
   end
 

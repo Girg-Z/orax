@@ -5,18 +5,42 @@ defmodule Orax.Integration do
   # ORAX_TEST_{HOST,PORT,USER,PASSWORD,DATABASE} and defaults to the
   # local Oracle Free container (orax_test/OraxTest1@127.0.0.1:1521/FREEPDB1,
   # created by test/support/create_test_user.sql).
+  # ORAX_TEST_SSL=1 connects over TLS checking the server certificate against
+  # the system CAs (e.g. Autonomous Database with TLS and no wallet).
 
   def config(extra \\ []) do
+    {extra_params, extra} = Keyword.pop(extra, :parameters, [])
+
     [
       hostname: System.get_env("ORAX_TEST_HOST", "127.0.0.1"),
       port: String.to_integer(System.get_env("ORAX_TEST_PORT", "1521")),
       username: System.get_env("ORAX_TEST_USER", "orax_test"),
       password: System.get_env("ORAX_TEST_PASSWORD", "OraxTest1"),
       database: System.get_env("ORAX_TEST_DATABASE", "FREEPDB1"),
+      parameters: Keyword.merge(ssl_parameters(), extra_params),
       pool_size: 1,
       log: false
     ]
     |> Keyword.merge(extra)
+  end
+
+  defp ssl_parameters do
+    if System.get_env("ORAX_TEST_SSL") in ["1", "true"] do
+      host = System.get_env("ORAX_TEST_HOST", "127.0.0.1") |> String.to_charlist()
+
+      [
+        ssl: [
+          verify: :verify_peer,
+          cacerts: :public_key.cacerts_get(),
+          server_name_indication: host,
+          customize_hostname_check: [
+            match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+          ]
+        ]
+      ]
+    else
+      []
+    end
   end
 
   # Runs fun with repo started outside the test supervisor (e.g. in on_exit)
