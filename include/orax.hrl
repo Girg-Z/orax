@@ -16,7 +16,6 @@
     {ssl, list()} |
     {socket_options, list()} |
     {timeout, non_neg_integer()} |
-    {read_timeout, non_neg_integer()} |       %ignored: responses end when the protocol says so
     {end_of_response, boolean()} |
     {autocommit, non_neg_integer()} |
     {fetch, non_neg_integer()} |

@@ -75,11 +75,9 @@ configuration:
     Note that Oracle implicitly commits DDL statements, also inside a transaction.
   * `:fetch` - Number of rows to fetch from the server
   * `:sdu` - Size of session data unit
-  * `:end_of_response` - Use the end of response marker of Oracle Database 23ai
-    and later when the server offers it, defaults to `true`. Older servers do not
+  * `:end_of_response` - Use the end of response marker of Oracle Database 26ai
+    (23ai) when the server offers it, defaults to `true`. 19c does not
     offer it; the end of each response is then found from its messages
-  * `:read_timeout` - Ignored, kept for compatibility: responses are read until
-    the protocol marks their end
   * `:role` - Mode that is used in an internal logon
   * `:prelim` - Mode that is permitted when the database is down
   * `:newpassword` - User new password (Change password for the connecting user)

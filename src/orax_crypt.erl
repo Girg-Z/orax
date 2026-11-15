@@ -7,14 +7,6 @@
 -include("orax.hrl").
 
 %% API
-%o3logon(#logon{auth=Sess, key=KeySess, password=Pass}) ->
-%    IVec = <<0:64>>,
-%    SrvSess = block_decrypt(des_cbc, binary:part(KeySess,0,8), IVec, Sess),
-%    N = (8 - (length(Pass) rem 8 )) rem 8,
-%    CliPass = <<(list_to_binary(Pass))/binary, (binary:copy(<<0>>, N))/binary>>,
-%    AuthPass = block_encrypt(des_cbc, binary:part(SrvSess,0,8), IVec, CliPass),
-%    #logon{password=hexify(AuthPass)++[N]}.
-
 o5logon(#logon{auth=Sess, user=User, password=Pass, bits=128} = Logon) ->
     IVec = <<0:64>>,
     CliPass = norm(User++Pass),

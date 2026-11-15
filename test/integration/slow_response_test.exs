@@ -35,9 +35,9 @@ defmodule Orax.Integration.SlowResponseTest do
     end
   end
 
-  # read_timeout is ignored now; it is kept to show that a short one, which
-  # used to cut such responses, does no harm.
-  test "a response with pauses longer than read_timeout is read whole" do
+  # Responses are read until the protocol marks their end, so pauses between
+  # packets do not cut them short.
+  test "a response with pauses between packets is read whole" do
     config = Integration.config()
     {proxy_port, _proxy} = SlowProxy.start(config[:port], 100)
 
@@ -47,8 +47,7 @@ defmodule Orax.Integration.SlowResponseTest do
       user: String.to_charlist(config[:username]),
       password: String.to_charlist(config[:password]),
       service_name: String.to_charlist(config[:database]),
-      timeout: 15_000,
-      read_timeout: 20
+      timeout: 15_000
     ]
 
     {:ok, conn} = :orax.start(opts)

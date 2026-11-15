@@ -307,11 +307,12 @@ defmodule Orax do
 
       config :orax, :json_library, SomeJSONModule
 
-  Defaults to [`Jason`](https://hexdocs.pm/jason)
+  Defaults to Elixir's built-in `JSON`. The module must provide `encode!/1`
+  and `decode!/1`, as `Jason` does.
   """
   @spec json_library() :: module()
   def json_library() do
-    Application.get_env(:orax, :json_library, Jason)
+    Application.get_env(:orax, :json_library, JSON)
   end
 
   @doc """

@@ -4,7 +4,7 @@ defmodule Orax.MixProject do
   def project do
     [app: :orax,
      version: "0.5.12",
-     elixir: "~> 1.11",
+     elixir: "~> 1.18",
      description: description(),
      package: package(),
      deps: deps()]
@@ -18,7 +18,7 @@ defmodule Orax.MixProject do
 
   defp deps do
     [
-      {:ecto_sql, "~> 3.12"}
+      {:ecto_sql, "~> 3.14"}
     ]
   end
 
