@@ -1,14 +1,14 @@
-defmodule Jamdb.Oracle.Integration.NumberTest do
+defmodule Orax.Integration.NumberTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
   import Ecto.Query
 
-  alias Jamdb.Oracle.Integration
-  alias Jamdb.Oracle.Integration.Repo
+  alias Orax.Integration
+  alias Orax.Integration.Repo
 
-  @table "jamdb_it_number"
+  @table "orax_it_number"
 
   setup_all do
     start_supervised!({Repo, Integration.config()})

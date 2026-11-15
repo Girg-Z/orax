@@ -1,4 +1,4 @@
--module(jamdb_oracle_conn).
+-module(orax_conn).
 
 %% API
 -export([connect/1, connect/2]).
@@ -6,7 +6,7 @@
 -export([disconnect/1, disconnect/2]).
 -export([sql_query/2, sql_query/3]).
 
--include("jamdb_oracle.hrl").
+-include("orax.hrl").
 
 -opaque state() :: #oraclient{}.
 -type error_type() :: socket | remote | local.
@@ -219,7 +219,7 @@ handle_token({?TTI_SESS, Request}, State) ->
     handle_login(State2);
 handle_token({?TTI_AUTH, Resp, Ver, SessId}, #oraclient{auth=KeyConn} = State) ->
     Cursors = spawn(fun() -> loop([]) end),
-    case jamdb_oracle_crypt:validate(#logon{auth=Resp, key=KeyConn}) of
+    case orax_crypt:validate(#logon{auth=Resp, key=KeyConn}) of
         ok -> {ok, State#oraclient{conn_state=connected,auth=SessId,server=Ver,cursors=Cursors}};
         error -> handle_error(remote, Resp, State)
     end;

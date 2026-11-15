@@ -1,8 +1,8 @@
-defmodule Jamdb.Oracle.Mixfile do
+defmodule Orax.MixProject do
   use Mix.Project
 
   def project do
-    [app: :jamdb_oracle,
+    [app: :orax,
      version: "0.5.12",
      elixir: "~> 1.11",
      description: description(),
@@ -28,8 +28,8 @@ defmodule Jamdb.Oracle.Mixfile do
 
   defp package do
     [files: ["src","include","lib","mix.exs"],
-    maintainers: ["Mykhailo Vstavskyi","Sergiy Kostyushkin"],
+    maintainers: ["Giorgio Zanchetti"],
     licenses: ["MIT"],
-    links: %{"Github" => "https://github.com/erlangbureau/jamdb_oracle"}]
+    links: %{"Github" => "https://github.com/Girg-Z/orax"}]
   end
 end

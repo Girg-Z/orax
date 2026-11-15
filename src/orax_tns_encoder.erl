@@ -1,4 +1,4 @@
--module(jamdb_oracle_tns_encoder).
+-module(orax_tns_encoder).
 
 %% API
 -export([encode_packet/3, encode_packet/4]).
@@ -7,7 +7,7 @@
 -export([encode_str/1]).
 -export([encode_helper/2]).
 
--include("jamdb_oracle.hrl").
+-include("orax.hrl").
 
 %% API
 encode_packet(Type, Data, Length) ->
@@ -38,7 +38,7 @@ encode_record(description, EnvOpts) ->
     Port            = proplists:get_value(port, EnvOpts, ?DEF_PORT),
     Sid             = proplists:get_value(sid, EnvOpts, ?DEF_SID),
     ServiceName     = proplists:get_value(service_name, EnvOpts),
-    AppName         = proplists:get_value(app_name, EnvOpts, "jamdb"),
+    AppName         = proplists:get_value(app_name, EnvOpts, "orax"),
     SslOpts         = proplists:get_value(ssl, EnvOpts, []),
     encode_str(
     "(DESCRIPTION=(CONNECT_DATA=("++ case ServiceName of
@@ -80,7 +80,7 @@ encode_record(sess, #oraclient{env=EnvOpts,seq=Tseq}) ->
     User            = proplists:get_value(user, EnvOpts),
     Role            = proplists:get_value(role, EnvOpts, 0),
     Prelim          = proplists:get_value(prelim, EnvOpts, 0),
-    AppName         = proplists:get_value(app_name, EnvOpts, "jamdb"),
+    AppName         = proplists:get_value(app_name, EnvOpts, "orax"),
     User2 = encode_str(User),
     <<
     ?TTI_FUN,
@@ -108,7 +108,7 @@ encode_record(auth, #oraclient{env=EnvOpts,passwd=Passwd,req=Request,seq=Tseq}) 
     Pass2 = binary_to_list(encode_str(Pass)),
     NewPass2 = binary_to_list(encode_str(NewPass)),
     #logon{auth=AuthSess, speedy_key=SpeedyKey, key=KeyConn, password=AuthPass, newpassword=AuthNewPass} =
-    jamdb_oracle_crypt:generate(Request#logon{user=binary_to_list(User2), password=Pass2, newpassword=NewPass2}),
+    orax_crypt:generate(Request#logon{user=binary_to_list(User2), password=Pass2, newpassword=NewPass2}),
     {PassMode, PassInd} = if AuthNewPass =/= [] -> {18, 1}; true -> {1, 0} end,
     KeyInd = if SpeedyKey =/= [] -> 1; true -> 0 end,
     ProxyInd = if ProxyUser =/= [] -> 1; true -> 0 end,

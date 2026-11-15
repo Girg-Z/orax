@@ -1,16 +1,16 @@
-defmodule Jamdb.Oracle.Integration.RawBindTest do
+defmodule Orax.Integration.RawBindTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
-  alias Jamdb.Oracle.Integration
-  alias Jamdb.Oracle.Integration.Repo
+  alias Orax.Integration
+  alias Orax.Integration.Repo
 
   defmodule Token do
     use Ecto.Schema
 
     @primary_key {:id, :id, autogenerate: false}
-    schema "jamdb_it_raw_tokens" do
+    schema "orax_it_raw_tokens" do
       field :token, :binary
       field :user_id, :integer
       field :context, :string
@@ -20,25 +20,25 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
 
   setup_all do
     start_supervised!({Repo, Integration.config()})
-    Integration.drop_table(Repo, "jamdb_it_raw")
-    Integration.drop_table(Repo, "jamdb_it_raw_tokens")
+    Integration.drop_table(Repo, "orax_it_raw")
+    Integration.drop_table(Repo, "orax_it_raw_tokens")
 
     Repo.query!("""
-    CREATE TABLE jamdb_it_raw (
+    CREATE TABLE orax_it_raw (
       id NUMBER, r RAW(2000), n NUMBER, ts TIMESTAMP, tz TIMESTAMP WITH TIME ZONE,
       d DATE, v VARCHAR2(100), b BLOB, c CLOB)
     """)
 
     Repo.query!("""
-    CREATE TABLE jamdb_it_raw_tokens (
+    CREATE TABLE orax_it_raw_tokens (
       id NUMBER(19) PRIMARY KEY, token RAW(32) NOT NULL, user_id NUMBER(19) NOT NULL,
       context VARCHAR2(255) NOT NULL, inserted_at TIMESTAMP NOT NULL)
     """)
 
     on_exit(fn ->
       Integration.with_repo(Repo, fn ->
-        Integration.drop_table(Repo, "jamdb_it_raw")
-        Integration.drop_table(Repo, "jamdb_it_raw_tokens")
+        Integration.drop_table(Repo, "orax_it_raw")
+        Integration.drop_table(Repo, "orax_it_raw_tokens")
       end)
     end)
 
@@ -46,8 +46,8 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
   end
 
   setup do
-    Repo.query!("DELETE FROM jamdb_it_raw")
-    Repo.query!("DELETE FROM jamdb_it_raw_tokens")
+    Repo.query!("DELETE FROM orax_it_raw")
+    Repo.query!("DELETE FROM orax_it_raw_tokens")
     :ok
   end
 
@@ -55,7 +55,7 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
 
   defp row(id) do
     %{rows: [row]} =
-      Repo.query!("SELECT r, n, ts, tz, d, v FROM jamdb_it_raw WHERE id = :1", [id])
+      Repo.query!("SELECT r, n, ts, tz, d, v FROM orax_it_raw WHERE id = :1", [id])
 
     row
   end
@@ -69,7 +69,7 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
       bytes = :crypto.strong_rand_bytes(size)
 
       Repo.query!(
-        "INSERT INTO jamdb_it_raw (r, n, ts, tz, d, v, id) VALUES (:1, :2, :3, :4, :5, :6, :7)",
+        "INSERT INTO orax_it_raw (r, n, ts, tz, d, v, id) VALUES (:1, :2, :3, :4, :5, :6, :7)",
         [raw(bytes), 42, ts, tz, d, "text", id]
       )
 
@@ -81,10 +81,10 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
   test "RAW bind in the middle and last position" do
     bytes = :crypto.strong_rand_bytes(32)
 
-    Repo.query!("INSERT INTO jamdb_it_raw (n, r, v, id) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (n, r, v, id) VALUES (:1, :2, :3, :4)",
       [7, raw(bytes), "mid", 1])
 
-    Repo.query!("INSERT INTO jamdb_it_raw (n, v, id, r) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (n, v, id, r) VALUES (:1, :2, :3, :4)",
       [8, "last", 2, raw(bytes)])
 
     assert [^bytes, n1, nil, nil, nil, "mid"] = row(1)
@@ -106,10 +106,10 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
   end
 
   test "NULL and empty RAW binds followed by other binds" do
-    Repo.query!("INSERT INTO jamdb_it_raw (r, n, v, id) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (r, n, v, id) VALUES (:1, :2, :3, :4)",
       [nil, 1, "nil", 1])
 
-    Repo.query!("INSERT INTO jamdb_it_raw (r, n, v, id) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (r, n, v, id) VALUES (:1, :2, :3, :4)",
       [raw(<<>>), 2, "empty", 2])
 
     # Oracle stores an empty RAW as NULL.
@@ -119,7 +119,7 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
   end
 
   test "same statement executed with changing bind types" do
-    sql = "INSERT INTO jamdb_it_raw (r, n, id) VALUES (:1, :2, :3)"
+    sql = "INSERT INTO orax_it_raw (r, n, id) VALUES (:1, :2, :3)"
     values = [nil, <<1, 2, 3>>, <<4, 5>>, nil, <<>>, :crypto.strong_rand_bytes(2000), <<6>>]
 
     for {value, id} <- Enum.with_index(values, 1) do
@@ -127,7 +127,7 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
       Repo.query!(sql, [bind, id, id])
     end
 
-    %{rows: rows} = Repo.query!("SELECT id, n, r FROM jamdb_it_raw ORDER BY id")
+    %{rows: rows} = Repo.query!("SELECT id, n, r FROM orax_it_raw ORDER BY id")
 
     expected =
       for {value, id} <- Enum.with_index(values, 1) do
@@ -141,19 +141,19 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
     blob = :crypto.strong_rand_bytes(5000)
     clob = String.duplicate("x", 5000)
 
-    Repo.query!("INSERT INTO jamdb_it_raw (b, n, v, id) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (b, n, v, id) VALUES (:1, :2, :3, :4)",
       [raw(blob), 1, "blob", 1])
 
-    Repo.query!("INSERT INTO jamdb_it_raw (c, n, v, id) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (c, n, v, id) VALUES (:1, :2, :3, :4)",
       [clob, 2, "clob", 2])
 
-    Repo.query!("INSERT INTO jamdb_it_raw (n, b, r, id) VALUES (:1, :2, :3, :4)",
+    Repo.query!("INSERT INTO orax_it_raw (n, b, r, id) VALUES (:1, :2, :3, :4)",
       [3, raw(blob), raw(<<9, 9>>), 3])
 
     %{rows: rows} =
       Repo.query!(
         "SELECT id, n, dbms_lob.getlength(b), dbms_lob.getlength(c), v, r " <>
-          "FROM jamdb_it_raw ORDER BY id"
+          "FROM orax_it_raw ORDER BY id"
       )
 
     assert Enum.map(rows, fn [id, n, b, c, v, r] -> [trunc(id), trunc(n), b, c, v, r] end) == [
@@ -170,7 +170,7 @@ defmodule Jamdb.Oracle.Integration.RawBindTest do
     Repo.insert!(%Token{id: 1, token: token, user_id: 10, context: "session", inserted_at: now})
 
     Repo.query!(
-      "INSERT INTO jamdb_it_raw_tokens (token, user_id, context, inserted_at, id) " <>
+      "INSERT INTO orax_it_raw_tokens (token, user_id, context, inserted_at, id) " <>
         "VALUES (:1, :2, :3, :4, :5)",
       [raw(:crypto.strong_rand_bytes(32)), 11, "reset", now, 2]
     )

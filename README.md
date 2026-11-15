@@ -1,4 +1,4 @@
-# Jamdb.Oracle
+# Orax
 
 Erlang driver and Ecto adapter for Oracle Database
 
@@ -194,7 +194,7 @@ Using quoted identifiers:
 To quote every table, prefix, column, index, and constraint identifier generated
 by the adapter, enable:
 
-    config :jamdb_oracle, quote_identifiers: true
+    config :orax, quote_identifiers: true
 
 The option defaults to `false` for compatibility with existing Oracle schemas.
 Quoted identifiers preserve the configured case, so `"users"` and `"USERS"`

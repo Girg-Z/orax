@@ -1,12 +1,12 @@
-defmodule Jamdb.Oracle.Integration.StringCastTest do
+defmodule Orax.Integration.StringCastTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
   import Ecto.Query
 
-  alias Jamdb.Oracle.Integration
-  alias Jamdb.Oracle.Integration.Repo
+  alias Orax.Integration
+  alias Orax.Integration.Repo
 
   setup_all do
     start_supervised!({Repo, Integration.config()})

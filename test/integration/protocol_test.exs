@@ -1,9 +1,9 @@
-defmodule Jamdb.Oracle.Integration.ProtocolTest do
+defmodule Orax.Integration.ProtocolTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
-  alias Jamdb.Oracle.Integration
+  alias Orax.Integration
 
   # Forwards a TCP connection to the database. When the counter is set, the
   # next data packet from the server gets an unknown message type, so its
@@ -62,20 +62,20 @@ defmodule Jamdb.Oracle.Integration.ProtocolTest do
   end
 
   defp start(extra) do
-    {:ok, conn} = :jamdb_oracle.start(opts(extra))
+    {:ok, conn} = :orax.start(opts(extra))
     on_exit(fn -> stop(conn) end)
     conn
   end
 
   defp stop(conn) do
-    :jamdb_oracle.stop(conn)
+    :orax.stop(conn)
   catch
     :exit, _ -> :ok
   end
 
   defp assert_usable(conn) do
     assert {:ok, [{:result_set, _, _, [[~c"ok"]]}]} =
-             :jamdb_oracle.sql_query(conn, ~c"SELECT 'ok' FROM dual", 15_000)
+             :orax.sql_query(conn, ~c"SELECT 'ok' FROM dual", 15_000)
   end
 
   # 23ai marks the end of each response; without it (19c and earlier) the
@@ -88,7 +88,7 @@ defmodule Jamdb.Oracle.Integration.ProtocolTest do
         conn = start(end_of_response: eor)
         sql = ~c"BEGIN dbms_session.sleep(1.4); END;"
 
-        assert {:error, :timeout, _reason} = :jamdb_oracle.sql_query(conn, sql, 1_000)
+        assert {:error, :timeout, _reason} = :orax.sql_query(conn, sql, 1_000)
         assert_usable(conn)
       end
 
@@ -96,7 +96,7 @@ defmodule Jamdb.Oracle.Integration.ProtocolTest do
         conn = start(end_of_response: eor)
         sql = ~c"SELECT 1/(level-3) FROM dual CONNECT BY level <= 5"
 
-        assert {:ok, [{:proc_result, 1476, _message}]} = :jamdb_oracle.sql_query(conn, sql, 15_000)
+        assert {:ok, [{:proc_result, 1476, _message}]} = :orax.sql_query(conn, sql, 15_000)
         assert_usable(conn)
       end
 
@@ -104,13 +104,13 @@ defmodule Jamdb.Oracle.Integration.ProtocolTest do
            %{end_of_response: eor} do
         config = Integration.config()
         {proxy_port, corrupt} = CorruptingProxy.start(config[:port])
-        {:ok, conn} = :jamdb_oracle.start(Keyword.put(opts(end_of_response: eor), :port, proxy_port))
+        {:ok, conn} = :orax.start(Keyword.put(opts(end_of_response: eor), :port, proxy_port))
         on_exit(fn -> stop(conn) end)
 
         :atomics.put(corrupt, 1, 1)
 
         assert {:error, :local, {:decode_error, details}} =
-                 :jamdb_oracle.sql_query(conn, ~c"SELECT 1 FROM dual", 15_000)
+                 :orax.sql_query(conn, ~c"SELECT 1 FROM dual", 15_000)
 
         assert details[:message_type] == 0xEE
         assert_usable(conn)
@@ -124,7 +124,7 @@ defmodule Jamdb.Oracle.Integration.ProtocolTest do
 
         for n <- 7750..8000 do
           sql = ~c"SELECT RPAD('x', 4000, 'x'), RPAD('y', #{n - 4000}, 'y') FROM dual"
-          {micros, result} = :timer.tc(fn -> :jamdb_oracle.sql_query(conn, sql, 15_000) end)
+          {micros, result} = :timer.tc(fn -> :orax.sql_query(conn, sql, 15_000) end)
 
           assert {:ok, [{:result_set, _, _, [[x, y]]}]} = result
           assert {length(x), length(y)} == {4000, min(n - 4000, 4000)}

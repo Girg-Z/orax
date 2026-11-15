@@ -1,9 +1,9 @@
-defmodule Jamdb.Oracle.Integration.SlowResponseTest do
+defmodule Orax.Integration.SlowResponseTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
-  alias Jamdb.Oracle.Integration
+  alias Orax.Integration
 
   # Forwards a TCP connection to the database, holding back chunks coming
   # from the server so a response arrives with pauses in the middle of it.
@@ -51,15 +51,15 @@ defmodule Jamdb.Oracle.Integration.SlowResponseTest do
       read_timeout: 20
     ]
 
-    {:ok, conn} = :jamdb_oracle.start(opts)
+    {:ok, conn} = :orax.start(opts)
 
     # About 80 KB, so the response spans several packets.
     sql = ~c"SELECT level, RPAD('x', 4000, 'x') FROM dual CONNECT BY level <= 20"
 
-    assert {:ok, [{:result_set, _, _, rows}]} = :jamdb_oracle.sql_query(conn, {sql, []}, 15_000)
+    assert {:ok, [{:result_set, _, _, rows}]} = :orax.sql_query(conn, {sql, []}, 15_000)
     assert length(rows) == 20
     assert Enum.all?(rows, fn [_level, value] -> length(value) == 4000 end)
 
-    :jamdb_oracle.stop(conn)
+    :orax.stop(conn)
   end
 end

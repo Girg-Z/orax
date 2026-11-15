@@ -1,4 +1,4 @@
-defmodule JamdbOracleTnsDecoderTest do
+defmodule OraxTnsDecoderTest do
   use ExUnit.Case, async: true
 
   @tti_rxh 6
@@ -17,7 +17,7 @@ defmodule JamdbOracleTnsDecoderTest do
              row_header::binary, row.(3)::binary, status()::binary>>
 
     assert {:ok, {0, ^row_format, [0], [[{1.0}], [{2.0}], [{3.0}]]}} =
-             :jamdb_oracle_tns_decoder.decode_two_task(data, {0, row_format, []})
+             :orax_tns_decoder.decode_two_task(data, {0, row_format, []})
   end
 
   describe "packets" do
@@ -25,16 +25,16 @@ defmodule JamdbOracleTnsDecoderTest do
       payload = <<0, 0, 9, 1>>
 
       assert {:ok, 6, 0, ^payload, "rest"} =
-               :jamdb_oracle_tns_decoder.decode_packet(<<12::16, 0::16, 6, 0, 0::16, payload::binary, "rest">>, 313)
+               :orax_tns_decoder.decode_packet(<<12::16, 0::16, 6, 0, 0::16, payload::binary, "rest">>, 313)
 
       assert {:ok, 6, 0, ^payload, "rest"} =
-               :jamdb_oracle_tns_decoder.decode_packet(<<12::32, 6, 0, 0::16, payload::binary, "rest">>, 319)
+               :orax_tns_decoder.decode_packet(<<12::32, 6, 0, 0::16, payload::binary, "rest">>, 319)
     end
 
     test "a packet not received whole needs more data" do
-      assert :more = :jamdb_oracle_tns_decoder.decode_packet(<<12::32, 6, 0>>, 319)
-      assert :more = :jamdb_oracle_tns_decoder.decode_packet(<<12::32, 6, 0, 0::16, 0, 0>>, 319)
-      assert {:error, {:packet_length, 3}} = :jamdb_oracle_tns_decoder.decode_packet(<<3::32, 6, 0, 0::16>>, 319)
+      assert :more = :orax_tns_decoder.decode_packet(<<12::32, 6, 0>>, 319)
+      assert :more = :orax_tns_decoder.decode_packet(<<12::32, 6, 0, 0::16, 0, 0>>, 319)
+      assert {:error, {:packet_length, 3}} = :orax_tns_decoder.decode_packet(<<3::32, 6, 0, 0::16>>, 319)
     end
   end
 
@@ -51,7 +51,7 @@ defmodule JamdbOracleTnsDecoderTest do
 
     test "a response split at any byte decodes as a whole one" do
       data = rows_response()
-      expected = :jamdb_oracle_tns_decoder.decode_two_task(data, {0, @row_format, []})
+      expected = :orax_tns_decoder.decode_two_task(data, {0, @row_format, []})
       assert {:ok, {0, @row_format, [0], [[{1.0}], [{2.0}], [{3.0}]]}} = expected
 
       for split <- 0..byte_size(data) do
@@ -59,8 +59,8 @@ defmodule JamdbOracleTnsDecoderTest do
         cont = {<<>>, {0, @row_format, []}}
 
         result =
-          case :jamdb_oracle_tns_decoder.decode_response(first, cont, false) do
-            {:more, cont2} -> :jamdb_oracle_tns_decoder.decode_response(second, cont2, false)
+          case :orax_tns_decoder.decode_response(first, cont, false) do
+            {:more, cont2} -> :orax_tns_decoder.decode_response(second, cont2, false)
             {:ok, result} when second == <<>> -> {:ok, result}
           end
 
@@ -73,7 +73,7 @@ defmodule JamdbOracleTnsDecoderTest do
       # two row headers and rows (12 bytes each) and part of the third header
       first = binary_part(data, 0, 27)
       assert {:more, {pending, {0, @row_format, [0], [[{1.0}], [{2.0}]]}}} =
-               :jamdb_oracle_tns_decoder.decode_response(first, {<<>>, {0, @row_format, []}}, false)
+               :orax_tns_decoder.decode_response(first, {<<>>, {0, @row_format, []}}, false)
 
       assert pending == binary_part(data, 24, 3)
     end
@@ -83,7 +83,7 @@ defmodule JamdbOracleTnsDecoderTest do
       first = binary_part(data, 0, byte_size(data) - 2)
 
       assert {:error, {:decode_error, details}} =
-               :jamdb_oracle_tns_decoder.decode_response(first, {<<>>, {0, @row_format, []}}, true)
+               :orax_tns_decoder.decode_response(first, {<<>>, {0, @row_format, []}}, true)
 
       assert details[:message_type] == @tti_status
       assert details[:reason] == "incomplete_message"
@@ -91,16 +91,16 @@ defmodule JamdbOracleTnsDecoderTest do
 
     test "an unknown message type is an error" do
       assert {:error, {:decode_error, details}} =
-               :jamdb_oracle_tns_decoder.decode_response(<<0xEE, 1, 2, 3>>, {<<>>, []}, false)
+               :orax_tns_decoder.decode_response(<<0xEE, 1, 2, 3>>, {<<>>, []}, false)
 
       assert details[:message_type] == 0xEE
       assert details[:reason] =~ "unknown_message_type"
     end
 
     test "LOB data cut short is not returned as a value" do
-      assert {:more, _} = :jamdb_oracle_tns_decoder.decode_response(<<14, 10, "abc">>, {<<>>, []}, false)
-      assert {:error, {:decode_error, _}} = :jamdb_oracle_tns_decoder.decode_response(<<14, 10, "abc">>, {<<>>, []}, true)
-      assert {:ok, {:ok, ~c"abc"}} = :jamdb_oracle_tns_decoder.decode_response(<<14, 3, "abc", status()::binary>>, {<<>>, []}, true)
+      assert {:more, _} = :orax_tns_decoder.decode_response(<<14, 10, "abc">>, {<<>>, []}, false)
+      assert {:error, {:decode_error, _}} = :orax_tns_decoder.decode_response(<<14, 10, "abc">>, {<<>>, []}, true)
+      assert {:ok, {:ok, ~c"abc"}} = :orax_tns_decoder.decode_response(<<14, 3, "abc", status()::binary>>, {<<>>, []}, true)
     end
   end
 
@@ -146,6 +146,6 @@ defmodule JamdbOracleTnsDecoderTest do
   defp assert_decoded(data) do
     accumulator = {0, [], []}
 
-    assert {:ok, ^accumulator} = :jamdb_oracle_tns_decoder.decode_two_task(data, accumulator)
+    assert {:ok, ^accumulator} = :orax_tns_decoder.decode_two_task(data, accumulator)
   end
 end

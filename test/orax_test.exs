@@ -1,10 +1,10 @@
-defmodule Jamdb.OracleTest do
+defmodule OraxTest do
   use ExUnit.Case, async: false
 
   import Ecto.Query
 
   alias Ecto.Queryable
-  alias Ecto.Adapters.Jamdb.Oracle.Connection, as: SQL
+  alias Ecto.Adapters.Orax.Connection, as: SQL
   alias Ecto.Migration.Reference
 
   defmodule Schema do
@@ -16,11 +16,11 @@ defmodule Jamdb.OracleTest do
       field :z, :integer
       field :w, :decimal
 
-      has_many :comments, Jamdb.OracleTest.Schema2,
+      has_many :comments, OraxTest.Schema2,
         references: :x,
         foreign_key: :z
 
-      has_one :permalink, Jamdb.OracleTest.Schema3,
+      has_one :permalink, OraxTest.Schema3,
         references: :y,
         foreign_key: :id
     end
@@ -32,7 +32,7 @@ defmodule Jamdb.OracleTest do
     import Ecto.Query
 
     schema "schema2" do
-      belongs_to :post, Jamdb.OracleTest.Schema,
+      belongs_to :post, OraxTest.Schema,
         references: :x,
         foreign_key: :z
     end
@@ -58,7 +58,7 @@ defmodule Jamdb.OracleTest do
   end
 
   defp plan(query, operation \\ :all) do
-    Ecto.Adapter.Queryable.plan_query(operation, Jamdb.Oracle, query) |> elem(0)
+    Ecto.Adapter.Queryable.plan_query(operation, Orax, query) |> elem(0)
   end
 
   defp all(query), do: query |> SQL.all() |> IO.iodata_to_binary()
@@ -974,8 +974,8 @@ defmodule Jamdb.OracleTest do
   end
 
   test "quotes all identifiers in queries when configured" do
-    previous = Application.get_env(:jamdb_oracle, :quote_identifiers)
-    Application.put_env(:jamdb_oracle, :quote_identifiers, true)
+    previous = Application.get_env(:orax, :quote_identifiers)
+    Application.put_env(:orax, :quote_identifiers, true)
     on_exit(fn -> restore_quote_identifiers(previous) end)
 
     query = Schema3 |> select([row], row.binary) |> plan()
@@ -997,19 +997,19 @@ defmodule Jamdb.OracleTest do
   test "infers output bind types for Ecto returning fields" do
     schema_meta = %{schema: Schema}
 
-    opts = Ecto.Adapters.Jamdb.Oracle.returning_options([], schema_meta, [:id, :x, :w])
+    opts = Ecto.Adapters.Orax.returning_options([], schema_meta, [:id, :x, :w])
     assert opts[:out] == [:integer, :integer, :decimal]
     assert opts[:out_rows]
 
-    opts = Ecto.Adapters.Jamdb.Oracle.returning_options([out: [:number]], schema_meta, [:id])
+    opts = Ecto.Adapters.Orax.returning_options([out: [:number]], schema_meta, [:id])
     assert opts[:out] == [:number]
     assert opts[:out_rows]
 
-    opts = Ecto.Adapters.Jamdb.Oracle.returning_options([], %{schema: nil},
+    opts = Ecto.Adapters.Orax.returning_options([], %{schema: nil},
       [{:id, :id}, {:name, :string}, {:uuid, :binary_id}])
     assert opts[:out] == [:integer, :string, :binary]
 
-    assert Ecto.Adapters.Jamdb.Oracle.returning_options([], schema_meta, []) == []
+    assert Ecto.Adapters.Orax.returning_options([], schema_meta, []) == []
   end
 
   test "insert with query as rows" do
@@ -1110,8 +1110,8 @@ defmodule Jamdb.OracleTest do
   end
 
   test "quotes all identifiers in DDL when configured" do
-    previous = Application.get_env(:jamdb_oracle, :quote_identifiers)
-    Application.put_env(:jamdb_oracle, :quote_identifiers, true)
+    previous = Application.get_env(:orax, :quote_identifiers)
+    Application.put_env(:orax, :quote_identifiers, true)
     on_exit(fn -> restore_quote_identifiers(previous) end)
 
     create = {:create, table(:posts, prefix: :foo), [{:add, :title, :integer, []}]}
@@ -1424,19 +1424,19 @@ defmodule Jamdb.OracleTest do
   end
 
   defp restore_quote_identifiers(nil) do
-    Application.delete_env(:jamdb_oracle, :quote_identifiers)
+    Application.delete_env(:orax, :quote_identifiers)
   end
   defp restore_quote_identifiers(value) do
-    Application.put_env(:jamdb_oracle, :quote_identifiers, value)
+    Application.put_env(:orax, :quote_identifiers, value)
   end
 
   defp to_constraints(message) do
-    Jamdb.Oracle.SQL.to_constraints(%DBConnection.ConnectionError{message: message}, [])
+    Orax.SQL.to_constraints(%DBConnection.ConnectionError{message: message}, [])
   end
 
   test "to_constraints strips the owner and downcases unquoted names" do
-    previous = Application.get_env(:jamdb_oracle, :quote_identifiers)
-    Application.delete_env(:jamdb_oracle, :quote_identifiers)
+    previous = Application.get_env(:orax, :quote_identifiers)
+    Application.delete_env(:orax, :quote_identifiers)
     on_exit(fn -> restore_quote_identifiers(previous) end)
 
     assert to_constraints("'ORA-00001: unique constraint (PREFIX.SUFFIX) violated\\n'") == [unique: "suffix"]
@@ -1457,8 +1457,8 @@ defmodule Jamdb.OracleTest do
   end
 
   test "to_constraints strips the owner and keeps the case of quoted names" do
-    previous = Application.get_env(:jamdb_oracle, :quote_identifiers)
-    Application.put_env(:jamdb_oracle, :quote_identifiers, true)
+    previous = Application.get_env(:orax, :quote_identifiers)
+    Application.put_env(:orax, :quote_identifiers, true)
     on_exit(fn -> restore_quote_identifiers(previous) end)
 
     assert to_constraints(

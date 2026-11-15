@@ -1,10 +1,10 @@
--module(jamdb_oracle_crypt).
+-module(orax_crypt).
 
 %% API
 -export([generate/1]).
 -export([validate/1]).
 
--include("jamdb_oracle.hrl").
+-include("orax.hrl").
 
 %% API
 %o3logon(#logon{auth=Sess, key=KeySess, password=Pass}) ->

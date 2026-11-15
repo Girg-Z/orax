@@ -1,7 +1,7 @@
-defmodule Jamdb.OracleTransactionTest do
+defmodule OraxTransactionTest do
   use ExUnit.Case, async: true
 
-  # Stands in for the jamdb_oracle gen_server and records the statements.
+  # Stands in for the orax gen_server and records the statements.
   defmodule FakeConn do
     use GenServer
 
@@ -15,7 +15,7 @@ defmodule Jamdb.OracleTransactionTest do
 
   defp state(fields \\ []) do
     {:ok, pid} = GenServer.start_link(FakeConn, self())
-    struct!(%Jamdb.Oracle{pid: pid, mode: :idle, timeout: 1000}, fields)
+    struct!(%Orax{pid: pid, mode: :idle, timeout: 1000}, fields)
   end
 
   defp sent do
@@ -27,55 +27,55 @@ defmodule Jamdb.OracleTransactionTest do
   end
 
   test "a transaction disables autocommit until COMMIT" do
-    assert {:ok, _, s} = Jamdb.Oracle.handle_begin([], state())
+    assert {:ok, _, s} = Orax.handle_begin([], state())
     assert s.mode == :transaction
     assert sent() == ["COMOFF"]
 
-    assert {:ok, _, s} = Jamdb.Oracle.handle_commit([], s)
+    assert {:ok, _, s} = Orax.handle_commit([], s)
     assert s.mode == :idle
     assert sent() == ["COMMIT", "COMON"]
   end
 
   test "rollback of a transaction is a full ROLLBACK" do
-    {:ok, _, s} = Jamdb.Oracle.handle_begin([], state())
+    {:ok, _, s} = Orax.handle_begin([], state())
     sent()
 
-    assert {:ok, _, s} = Jamdb.Oracle.handle_rollback([], s)
+    assert {:ok, _, s} = Orax.handle_rollback([], s)
     assert s.mode == :idle
     assert sent() == ["ROLLBACK", "COMON"]
   end
 
   test "savepoints inside a transaction" do
-    {:ok, _, s} = Jamdb.Oracle.handle_begin([], state())
+    {:ok, _, s} = Orax.handle_begin([], state())
     sent()
 
-    assert {:ok, _, s} = Jamdb.Oracle.handle_begin([mode: :savepoint], s)
-    assert {:ok, _, s} = Jamdb.Oracle.handle_rollback([mode: :savepoint], s)
-    assert {:ok, _, s} = Jamdb.Oracle.handle_begin([mode: :savepoint], s)
-    assert {:ok, _, s} = Jamdb.Oracle.handle_commit([mode: :savepoint], s)
+    assert {:ok, _, s} = Orax.handle_begin([mode: :savepoint], s)
+    assert {:ok, _, s} = Orax.handle_rollback([mode: :savepoint], s)
+    assert {:ok, _, s} = Orax.handle_begin([mode: :savepoint], s)
+    assert {:ok, _, s} = Orax.handle_commit([mode: :savepoint], s)
     assert s.mode == :transaction
     assert sent() == ["SAVEPOINT svpt", "ROLLBACK TO svpt", "SAVEPOINT svpt"]
   end
 
   test "rollback in error mode ends the transaction" do
-    assert {:ok, _, s} = Jamdb.Oracle.handle_rollback([], state(mode: :error))
+    assert {:ok, _, s} = Orax.handle_rollback([], state(mode: :error))
     assert s.mode == :idle
     assert sent() == ["ROLLBACK", "COMON"]
   end
 
   test "autocommit is left alone when disabled in the config" do
     s = state(autocommit: 0)
-    {:ok, _, s} = Jamdb.Oracle.handle_begin([], s)
-    {:ok, _, s} = Jamdb.Oracle.handle_commit([], s)
-    {:ok, _, s} = Jamdb.Oracle.handle_begin([], s)
-    {:ok, _, _} = Jamdb.Oracle.handle_rollback([], s)
+    {:ok, _, s} = Orax.handle_begin([], s)
+    {:ok, _, s} = Orax.handle_commit([], s)
+    {:ok, _, s} = Orax.handle_begin([], s)
+    {:ok, _, _} = Orax.handle_rollback([], s)
     assert sent() == ["COMMIT", "ROLLBACK"]
   end
 
   test "status mismatches are reported to DBConnection" do
-    assert {:idle, _} = Jamdb.Oracle.handle_commit([], state())
-    assert {:idle, _} = Jamdb.Oracle.handle_begin([mode: :savepoint], state())
-    assert {:transaction, _} = Jamdb.Oracle.handle_begin([], state(mode: :transaction))
+    assert {:idle, _} = Orax.handle_commit([], state())
+    assert {:idle, _} = Orax.handle_begin([mode: :savepoint], state())
+    assert {:transaction, _} = Orax.handle_begin([], state(mode: :transaction))
     assert sent() == []
   end
 end

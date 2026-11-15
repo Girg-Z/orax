@@ -1,4 +1,4 @@
--module(jamdb_oracle_tns_decoder).
+-module(orax_tns_decoder).
 
 %% API
 -export([decode_packet/2]).
@@ -7,7 +7,7 @@
 -export([decode_token/2]).
 -export([decode_helper/3]).
 
--include("jamdb_oracle.hrl").
+-include("orax.hrl").
 
 %% API
 

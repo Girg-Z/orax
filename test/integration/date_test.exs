@@ -1,18 +1,18 @@
-defmodule Jamdb.Oracle.Integration.DateTest do
+defmodule Orax.Integration.DateTest do
   use ExUnit.Case, async: false
 
   @moduletag :oracle
 
   import Ecto.Query
 
-  alias Jamdb.Oracle.Integration
-  alias Jamdb.Oracle.Integration.Repo
+  alias Orax.Integration
+  alias Orax.Integration.Repo
 
   defmodule Validity do
     use Ecto.Schema
 
     @primary_key {:id, :id, autogenerate: false}
-    schema "jamdb_it_date" do
+    schema "orax_it_date" do
       field :valid_from, :date
       field :valid_to, :date
     end
@@ -20,11 +20,11 @@ defmodule Jamdb.Oracle.Integration.DateTest do
 
   setup_all do
     start_supervised!({Repo, Integration.config()})
-    Integration.drop_table(Repo, "jamdb_it_date")
+    Integration.drop_table(Repo, "orax_it_date")
 
     [ddl] =
-      Ecto.Adapters.Jamdb.Oracle.Connection.execute_ddl(
-        {:create, Ecto.Migration.table(:jamdb_it_date, primary_key: false),
+      Ecto.Adapters.Orax.Connection.execute_ddl(
+        {:create, Ecto.Migration.table(:orax_it_date, primary_key: false),
          [{:add, :id, :bigint, primary_key: true}, {:add, :valid_from, :date, []},
           {:add, :valid_to, :date, []}]}
       )
@@ -33,7 +33,7 @@ defmodule Jamdb.Oracle.Integration.DateTest do
 
     on_exit(fn ->
       Integration.with_repo(Repo, fn ->
-        Integration.drop_table(Repo, "jamdb_it_date")
+        Integration.drop_table(Repo, "orax_it_date")
       end)
     end)
 
@@ -53,7 +53,7 @@ defmodule Jamdb.Oracle.Integration.DateTest do
 
   test "DATE values with a time part load as the date" do
     Repo.query!(
-      "INSERT INTO jamdb_it_date (id, valid_from, valid_to) " <>
+      "INSERT INTO orax_it_date (id, valid_from, valid_to) " <>
         "VALUES (2, TO_DATE('2026-05-06 13:14:15', 'YYYY-MM-DD HH24:MI:SS'), SYSDATE)"
     )
 

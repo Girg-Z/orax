@@ -1,4 +1,4 @@
-defmodule Jamdb.Oracle.SQL do
+defmodule Orax.SQL do
   @moduledoc """
   Adapter module for Oracle. `Ecto.Adapters.SQL.Connection` callbacks implementation.
 
@@ -12,7 +12,7 @@ defmodule Jamdb.Oracle.SQL do
   def quote_identifier(name) when is_list(name),
     do: name |> :binary.list_to_bin() |> quote_identifier()
   def quote_identifier(name) when is_binary(name) do
-    if Application.get_env(:jamdb_oracle, :quote_identifiers, false) do
+    if Application.get_env(:orax, :quote_identifiers, false) do
       [?\", escape_identifier(name), ?\"]
     else
       name
@@ -344,7 +344,7 @@ defmodule Jamdb.Oracle.SQL do
         nil -> name
       end
 
-    if Application.get_env(:jamdb_oracle, :quote_identifiers, false) do
+    if Application.get_env(:orax, :quote_identifiers, false) do
       name
     else
       String.downcase(name)

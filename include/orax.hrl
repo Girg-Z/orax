@@ -1,10 +1,10 @@
 -ifndef(TNS_HRL).
 
 -include("TNS.hrl").
--include("jamdb_oracle_defaults.hrl").
+-include("orax_defaults.hrl").
 
--define(ENCODER, jamdb_oracle_tns_encoder).
--define(DECODER, jamdb_oracle_tns_decoder).
+-define(ENCODER, orax_tns_encoder).
+-define(DECODER, orax_tns_decoder).
 
 -type env() ::
     {host, string()} |

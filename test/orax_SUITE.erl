@@ -1,8 +1,8 @@
--module(jamdb_oracle_SUITE).
+-module(orax_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
 
--include("jamdb_oracle_test.hrl").
+-include("orax_test.hrl").
 
 -compile(export_all).
 
@@ -65,12 +65,12 @@ groups() ->
     ].
 
 init_per_suite(Config) ->
-    {ok, ConnRef} = jamdb_oracle:start(?ConnOpts),
+    {ok, ConnRef} = orax:start(?ConnOpts),
     [{conn_ref, ConnRef}|Config].
 
 end_per_suite(Config) ->
     ConnRef = ?config(conn_ref, Config),
-    ok = jamdb_oracle:stop(ConnRef),
+    ok = orax:stop(ConnRef),
     Config.
 
 init_per_group(Name, Config) ->
@@ -94,10 +94,10 @@ init_per_testcase(Case, Config) ->
     case ?config(init_type, Config) of
         datatypes ->
             Query = lists:concat(["create table ", Case, "( ", table_desc(Case), " )"]),
-            {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query);
+            {ok, Result} = orax:sql_query(ConnRef, Query);
         procedure ->
             Query = lists:concat(["create or replace procedure ", Case, " ", procedure_desc(Case)]),
-            {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query);
+            {ok, Result} = orax:sql_query(ConnRef, Query);
         _ ->
             nothing
     end,
@@ -108,10 +108,10 @@ end_per_testcase(Case, Config) ->
     case ?config(init_type, Config) of
         datatypes ->
             Query = lists:concat(["drop table ", Case]),
-            {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query);
+            {ok, Result} = orax:sql_query(ConnRef, Query);
         procedure ->
             Query = lists:concat(["drop procedure ", Case]),
-            {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query);
+            {ok, Result} = orax:sql_query(ConnRef, Query);
         _ ->
             nothing
     end,
@@ -122,27 +122,27 @@ select(Config) ->
     ConnRef = ?config(conn_ref, Config),
     Query = "select 1 one, 2 two, 3 three from dual",
     Result = [{result_set, [<<"ONE">>, <<"TWO">>, <<"THREE">>], [], [ [{1.0},{2.0},{3.0}] ]}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 select_with_bind(Config) ->
     ConnRef = ?config(conn_ref, Config),
     Query = {"select '1' one, '2' two, '3' three from dual where 1=:1", [1]},
     Result = [{result_set, [<<"ONE">>, <<"TWO">>, <<"THREE">>], [], [ ["1","2","3"] ]}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 select_with_named_bind(Config) ->
     ConnRef = ?config(conn_ref, Config),
     Query = {"select to_date(:str,:fmt) to_date from dual where 1=:one", 
                 #{fmt => "'YYYY-MM-DD HH24:MI:SS'", one => 1, str => "'2016-08-01 01:02:03'" }},
     Result = [{result_set, [<<"TO_DATE">>], [], [ [{{2016,8,1},{1,2,3}}] ]}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 select_multi(Config) ->
     ConnRef = ?config(conn_ref, Config),
     LongList = [ ["abcd"] || _N <- lists:seq(1,99) ],
     Query = {"select 'abcd' C_CHAR from dual connect by level <= :1 ", [99]},
     Result = [{result_set, [<<"C_CHAR">>], [], LongList}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 t_number(Config) ->
     ConnRef = ?config(conn_ref, Config),
@@ -377,13 +377,13 @@ with_input_params(Config) ->
     ConnRef = ?config(conn_ref, Config),
     Query = {"begin with_input_params(:1); end;", [0]},
     Result = [{proc_result,0,[[]]}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 with_output_params(Config) ->
     ConnRef = ?config(conn_ref, Config),
     Query = {"begin with_output_params(:1, :2, :3); end;", [{out,varchar}, {out,number}, {out,date}]},    
     Result = [{proc_result,0,[["1",{2},{{2016,8,1},{1,2,3}}]]}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 with_input_and_output_params(Config) ->
     ConnRef = ?config(conn_ref, Config),
@@ -391,14 +391,14 @@ with_input_and_output_params(Config) ->
     Query = {"begin with_input_and_output_params(:i1, :o2); end;",
              #{o2 => {out, cursor}, i1 => {in, "select 'abcd' C_CHAR from dual connect by level <= 99"}}},
     Result = [{result_set, [<<"C_CHAR">>], [], LongList}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 with_multi_output_params(Config) ->
     ConnRef = ?config(conn_ref, Config),
     Query = {"begin with_multi_output_params(:i1, :o1, :o2); end;",
              #{o2 => {out, cursor}, i1 => {in, "select 1 one, 2 two, 3 three from dual"}, o1 => {out, "0"}}},
     Result = [{result_set, [<<"ONE">>, <<"TWO">>, <<"THREE">>], [], [ [{1.0},{2.0},{3.0}] ]}],
-    {ok, Result} = jamdb_oracle:sql_query(ConnRef, Query).
+    {ok, Result} = orax:sql_query(ConnRef, Query).
 
 %% internal
 table_desc(t_number) ->
@@ -486,15 +486,15 @@ insert(ConnRef, Tab, Key, Value) ->
     Query1 = [<<"insert into ", Table/binary, "(", Key/binary, ") "
                                 "VALUES( ">>, arg, <<" )">>],
     Query2 = format_query(Query1, [Value]),
-    jamdb_oracle:sql_query(ConnRef, binary_to_list(Query2)).
+    orax:sql_query(ConnRef, binary_to_list(Query2)).
 
 select(ConnRef, Table) ->
     Query = lists:concat(["select * from ", Table]),
-    jamdb_oracle:sql_query(ConnRef, Query).
+    orax:sql_query(ConnRef, Query).
 
 delete(ConnRef, Table) ->
     Query = lists:concat(["delete from ", Table]),
-    jamdb_oracle:sql_query(ConnRef, Query).
+    orax:sql_query(ConnRef, Query).
 
 %% Temporary wrapper
 format_query(Query, Args) ->
