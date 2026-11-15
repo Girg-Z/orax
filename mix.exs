@@ -3,7 +3,7 @@ defmodule Orax.MixProject do
 
   def project do
     [app: :orax,
-     version: "0.5.12",
+     version: "0.1.0",
      elixir: "~> 1.18",
      test_ignore_filters: [&String.starts_with?(&1, "test/support/")],
      description: description(),
@@ -24,11 +24,11 @@ defmodule Orax.MixProject do
   end
 
   defp description do
-    "Erlang driver and Ecto adapter for Oracle"
+    "Native Erlang driver and Ecto adapter for Oracle Database 19c and 26ai"
   end
 
   defp package do
-    [files: ["src","include","lib","mix.exs"],
+    [files: ["src", "include", "lib", "mix.exs", "README.md", "CHANGELOG.md", "LICENSE"],
     maintainers: ["Giorgio Zanchetti"],
     licenses: ["MIT"],
     links: %{"Github" => "https://github.com/Girg-Z/orax"}]

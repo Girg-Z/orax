@@ -1,6 +1,6 @@
 {application, orax, [
     {description, "Erlang driver for Oracle"},
-    {vsn, "0.5.12"},
+    {vsn, "0.1.0"},
     {modules, []},
     {registered, []},
     {applications, [kernel,stdlib]},

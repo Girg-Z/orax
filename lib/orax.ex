@@ -1,5 +1,5 @@
 defmodule Orax do
-  @vsn "0.5.12"
+  @vsn "0.1.0"
   @moduledoc """
   Adapter module for Oracle. `DBConnection` behaviour implementation.
 
