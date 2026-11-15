@@ -1,11 +1,14 @@
+%% Encoding the TNS packets and the TTC messages of the requests, after the
+%% Message classes of python-oracledb thin mode (thin/messages/*.pyx). The
+%% fields of the messages depend on the negotiated capabilities (#caps{}).
 -module(orax_tns_encoder).
 
 %% API
 -export([encode_packet/3, encode_packet/4]).
 -export([encode_record/2]).
--export([encode_token/3]).
 -export([encode_str/1]).
 -export([encode_helper/2]).
+-export([bind_format/2, value_bytes/2]).
 
 -include("orax.hrl").
 
@@ -14,6 +17,9 @@ encode_packet(Type, Data, Length) ->
     encode_packet(Type, Data, Length, 0).
 
 %% Packets take a 32-bit length once TNS version 315 or later is negotiated.
+%% The end of the data (eof) is a data packet with only the EOF data flag.
+encode_packet(eof, _Data, _Length, Version) ->
+    {<<(packet_header(10, ?TNS_DATA, Version))/binary, ?TNS_DATA_FLAGS_EOF:16>>, <<>>};
 encode_packet(?TNS_DATA, Data, Length, Version) ->
     PacketSize = byte_size(Data) + 10,
     BodySize = Length - 10,
@@ -80,7 +86,7 @@ encode_record(login, #oraclient{env=EnvOpts,sdu=Sdu,auth=Desc}) ->
         true -> {Connect, Data};
         false -> {<<Connect/binary, Data/binary>>, <<>>}
     end;
-encode_record(sess, #oraclient{env=EnvOpts,seq=Tseq}) ->
+encode_record(sess, #oraclient{env=EnvOpts} = State) ->
     {ok, UserHost}  = inet:gethostname(),
     UserPID         = os:getpid(),
     User            = proplists:get_value(user, EnvOpts),
@@ -89,21 +95,21 @@ encode_record(sess, #oraclient{env=EnvOpts,seq=Tseq}) ->
     AppName         = proplists:get_value(app_name, EnvOpts, "orax"),
     User2 = encode_str(User),
     <<
-    ?TTI_FUN,
-    ?TTI_SESS, Tseq,
+    (function_code(?TTI_SESS, State))/binary,
     1,                                                                         %authusr
     (encode_sb2(byte_size(User2)))/binary,
     (encode_sb2((Role * 32) bor (Prelim * 128) bor 1))/binary,                 %auth mode
     1,                                                                         %authivl
-    (encode_sb2(4))/binary,                                                    %number of keyval pairs
+    (encode_sb2(5))/binary,                                                    %number of keyval pairs
     1,1,                                                                       %authovl
-    User2/binary,
+    (raw_bytes_and_length(User2))/binary,
+    (encode_keyval("AUTH_TERMINAL", "unknown"))/binary,
     (encode_keyval("AUTH_PROGRAM_NM", AppName))/binary,
     (encode_keyval("AUTH_MACHINE", UserHost))/binary,
     (encode_keyval("AUTH_PID", UserPID))/binary,
     (encode_keyval("AUTH_SID", User))/binary
     >>;
-encode_record(auth, #oraclient{env=EnvOpts,passwd=Passwd,req=Request,seq=Tseq}) ->
+encode_record(auth, #oraclient{env=EnvOpts,passwd=Passwd,req=Request} = State) ->
     User            = proplists:get_value(user, EnvOpts),
     ProxyUser       = proplists:get_value(proxy_user, EnvOpts, []),
     Role            = proplists:get_value(role, EnvOpts, 0),
@@ -119,308 +125,340 @@ encode_record(auth, #oraclient{env=EnvOpts,passwd=Passwd,req=Request,seq=Tseq}) 
     KeyInd = if SpeedyKey =/= [] -> 1; true -> 0 end,
     ProxyInd = if ProxyUser =/= [] -> 1; true -> 0 end,
     {<<
-    ?TTI_FUN,
-    ?TTI_AUTH, Tseq,
+    (function_code(?TTI_AUTH, State))/binary,
     1,                                                                         %authusr
     (encode_sb2(byte_size(User2)))/binary,
     (encode_sb2((Role * 32) bor (Prelim * 128) bor PassMode bor 256))/binary,  %auth mode
     1,                                                                         %authivl
-    (encode_sb2(4 + KeyInd + PassInd + ProxyInd))/binary,                      %number of keyval pairs
+    (encode_sb2(5 + KeyInd + PassInd + ProxyInd))/binary,                      %number of keyval pairs
     1,1,                                                                       %authovl
-    User2/binary,
+    (raw_bytes_and_length(User2))/binary,
     (if ProxyInd =/= 0 -> encode_keyval("PROXY_CLIENT_NAME", ProxyUser); true -> <<>> end)/binary,
     (encode_keyval("AUTH_PASSWORD", AuthPass))/binary,
     (if PassInd =/= 0 -> encode_keyval("AUTH_NEWPASSWORD", AuthNewPass); true -> <<>> end)/binary,
     (if KeyInd =/= 0 -> encode_keyval("AUTH_PBKDF2_SPEEDY_KEY", SpeedyKey); true -> <<>> end)/binary,
     (encode_keyval(<<"AUTH_SESSKEY">>, AuthSess, 1))/binary,
+    (encode_keyval("SESSION_CLIENT_CHARSET", "873"))/binary,
     (encode_keyval("SESSION_CLIENT_DRIVER_NAME", "beam"))/binary,
     (encode_keyval("SESSION_CLIENT_VERSION", "186647296"))/binary
     >>,
     KeyConn};
-encode_record(dty, #oraclient{charset=Charset} = State) ->
-    Caps = compile_caps(State),
+%% The data types message: character sets, the compile time capabilities
+%% (with the end of response marker only when the server offered it in the
+%% accept packet), the runtime capabilities and the data types table.
+encode_record(dty, #oraclient{charset=Charset, eor=Eor, caps=Caps}) ->
+    CompileCaps = orax_caps:compile_caps(Caps, Eor),
+    RuntimeCaps = orax_caps:runtime_caps(Caps),
     <<
     ?TTI_DTY,
     (encode_ub2(Charset))/binary,                                              %cli in charset
     (encode_ub2(encode_helper(utf16, Charset)))/binary,                        %cli out charset
-    1,
-    (byte_size(Caps)),
-    Caps/binary,
-    7,2,0,0,0,0,0,0,
-    1,1,1,0,2,2,10,0,8,8,1,0,12,12,10,0,23,23,1,0,24,24,1,0,25,25,1,0,
-    26,26,1,0,27,27,1,0,28,28,1,0,29,29,1,0,30,30,1,0,31,31,1,0,32,32,1,0,
-    33,33,1,0,10,10,1,0,11,11,1,0,40,40,1,0,41,41,1,0,117,117,1,0,120,120,1,0,
-    34,34,1,0,35,35,1,0,36,36,1,0,37,37,1,0,38,38,1,0,42,42,1,0,43,43,1,0,
-    44,44,1,0,45,45,1,0,46,46,1,0,47,47,1,0,48,48,1,0,49,49,1,0,50,50,1,0,
-    51,51,1,0,52,52,1,0,53,53,1,0,54,54,1,0,55,55,1,0,56,56,1,0,57,57,1,0,
-    59,59,1,0,60,60,1,0,61,61,1,0,62,62,1,0,63,63,1,0,64,64,1,0,65,65,1,0,
-    66,66,1,0,67,67,1,0,71,71,1,0,72,72,1,0,73,73,1,0,75,75,1,0,77,77,1,0,
-    78,78,1,0,79,79,1,0,80,80,1,0,81,81,1,0,82,82,1,0,83,83,1,0,84,84,1,0,
-    85,85,1,0,86,86,1,0,87,87,1,0,88,88,1,0,89,89,1,0,90,90,1,0,92,92,1,0,
-    93,93,1,0,98,98,1,0,99,99,1,0,103,103,1,0,107,107,1,0,124,124,1,0,
-    125,125,1,0,126,126,1,0,127,127,1,0,128,128,1,0,129,129,1,0,130,130,1,0,
-    131,131,1,0,132,132,1,0,133,133,1,0,134,134,1,0,135,135,1,0,137,137,1,0,
-    138,138,1,0,139,139,1,0,140,140,1,0,141,141,1,0,142,142,1,0,143,143,1,0,
-    144,144,1,0,145,145,1,0,148,148,1,0,149,149,1,0,150,150,1,0,151,151,1,0,
-    157,157,1,0,158,158,1,0,159,159,1,0,160,160,1,0,161,161,1,0,162,162,1,0,
-    163,163,1,0,164,164,1,0,165,165,1,0,166,166,1,0,167,167,1,0,168,168,1,0,
-    169,169,1,0,170,170,1,0,171,171,1,0,173,173,1,0,174,174,1,0,175,175,1,0,
-    176,176,1,0,177,177,1,0,193,193,1,0,194,194,1,0,198,198,1,0,199,199,1,0,
-    200,200,1,0,201,201,1,0,202,202,1,0,203,203,1,0,204,204,1,0,205,205,1,0,
-    206,206,1,0,207,207,1,0,210,210,1,0,211,211,1,0,212,212,1,0,213,213,1,0,
-    214,214,1,0,215,215,1,0,216,216,1,0,217,217,1,0,218,218,1,0,219,219,1,0,
-    220,220,1,0,221,221,1,0,222,222,1,0,223,223,1,0,224,224,1,0,225,225,1,0,
-    226,226,1,0,227,227,1,0,228,228,1,0,229,229,1,0,230,230,1,0,234,234,1,0,
-    235,235,1,0,236,236,1,0,237,237,1,0,238,238,1,0,239,239,1,0,240,240,1,0,
-    242,242,1,0,243,243,1,0,244,244,1,0,245,245,1,0,246,246,1,0,252,252,0,0,
-    253,253,1,0,254,254,1,0,2,2,1,0,4,4,1,0,5,5,1,0,6,6,1,0,7,7,1,0,9,9,1,0,
-    12,12,1,0,13,13,1,0,14,14,1,0,15,15,1,0,16,16,1,0,17,17,1,0,18,18,1,0,
-    19,19,1,0,20,20,1,0,21,21,1,0,22,22,1,0,68,68,1,0,69,69,1,0,70,70,1,0,
-    3,2,10,0,4,2,10,0,5,1,1,0,6,2,10,0,7,2,10,0,9,1,1,0,13,0,14,0,15,23,1,0,
-    16,0,17,0,18,0,19,0,20,0,21,0,22,0,39,120,1,0,58,0,68,2,10,0,69,0,70,0,
-    74,0,76,0,91,2,10,0,94,1,1,0,95,23,1,0,96,96,1,0,97,96,1,0,100,100,1,0,
-    101,101,1,0,102,102,1,0,104,11,1,0,105,0,106,106,1,0,108,109,1,0,109,109,
-    1,0,110,111,1,0,111,111,1,0,112,112,1,0,113,113,1,0,114,114,1,0,115,115,
-    1,0,116,102,1,0,118,0,119,0,121,0,122,0,123,0,136,0,146,146,1,0,147,0,
-    152,2,10,0,153,2,10,0,154,2,10,0,155,1,1,0,156,12,10,0,172,2,10,0,
-    178,178,1,0,179,179,1,0,180,180,1,0,181,181,1,0,182,182,1,0,183,183,1,0,
-    184,12,10,0,185,185,1,0,186,186,1,0,187,187,1,0,188,188,1,0,189,189,1,0,
-    190,190,1,0,191,0,192,0,195,112,1,0,196,113,1,0,197,114,1,0,208,208,1,0,
-    209,0,231,231,1,0,232,231,1,0,233,233,1,0,241,109,1,0,3,0,104,104,1,0,
-    91,91,1,0,110,110,1,0,111,111,1,0,112,112,1,0,113,113,1,0,114,114,1,0,
-    115,115,1,0,116,116,1,0,118,118,1,0,119,119,1,0,0
+    (?TNS_ENCODING_MULTI_BYTE bor ?TNS_ENCODING_CONV_LENGTH),                  %encoding flags
+    (byte_size(CompileCaps)),
+    CompileCaps/binary,
+    (byte_size(RuntimeCaps)),
+    RuntimeCaps/binary,
+    (orax_caps:data_types())/binary
     >>;
-encode_record(pro, _EnvOpts) ->
+encode_record(pro, _State) ->
     <<
     ?TTI_PRO,
     6,0,98,101,97,109,0
     >>;
-encode_record(spfp, #oraclient{seq=Tseq}) ->
+encode_record(spfp, State) ->
     <<
-    ?TTI_FUN,
-    ?TTI_SPFP, Tseq,
+    (function_code(?TTI_SPFP, State))/binary,
     1,1,100,1,1,0,0,0,0,0
     >>;
-encode_record(start, #oraclient{req=Request,seq=Tseq}) ->
+encode_record(start, #oraclient{req=Request} = State) ->
     <<
-    ?TTI_FUN,
-    ?TTI_STRT, Tseq,
+    (function_code(?TTI_STRT, State))/binary,
     (encode_sb4(Request))/binary,   %mode 0 norestrict, 1 restrict, 16 force
     1
     >>;
-encode_record(stop, #oraclient{req=Request,seq=Tseq}) ->
+encode_record(stop, #oraclient{req=Request} = State) ->
     <<
-    ?TTI_FUN,
-    ?TTI_STOP, Tseq,
+    (function_code(?TTI_STOP, State))/binary,
     (encode_sb4(Request))/binary,   %mode 2 immediate, 4 normal, 8 final, 64 abort, 128 tran
     1
     >>;
-encode_record(tran, #oraclient{req=Request,seq=Tseq}) ->
+encode_record(tran, #oraclient{req=Request} = State) ->
+    function_code(Request, State);
+%% Fetches more rows of an open cursor (fetch.pyx).
+encode_record(fetch, #oraclient{fetch=Fetch,req=Cursor} = State) ->
     <<
-    ?TTI_FUN,
-    Request, Tseq
+    (function_code(?TTI_FETCH, State))/binary,
+    (encode_ub4(Cursor))/binary,    %cursor
+    (encode_ub4(Fetch))/binary      %rows to fetch
     >>;
-encode_record(fetch, #oraclient{fetch=Fetch,req=Cursor,seq=Tseq}) ->
+encode_record(exec, #oraclient{req=#exec{} = Exec} = State) ->
+    execute(Exec, State);
+%% Closes the given cursors, before the function that follows.
+encode_record(close_cursors, #oraclient{req=Cursors} = State) ->
     <<
-    ?TTI_FUN,
-    ?TTI_FETCH, Tseq,
-    (encode_sb4(Cursor))/binary,    %cursor
-    (encode_sb4(Fetch))/binary      %rows to fetch
+    (piggyback_code(?TTI_OCCA, State))/binary,
+    1,                                      %pointer
+    (encode_ub4(length(Cursors)))/binary,
+    << <<(encode_ub4(Cursor))/binary>> || Cursor <- Cursors >>/binary
     >>;
-encode_record(exec, #oraclient{type=Type,auto=Auto,charset=Charset,fetch=Fetch,req={Cursor,Query,Bind,Batch,Def},seq=Tseq}) ->
-    QueryData = encode_str(Query),
-    QueryLen = if Cursor =/= 0 -> 0; true -> byte_size(QueryData) end,
-    BindLen = length(Bind),
-    BindInd =
-    case {Cursor, BindLen} of
-        {0, 0} -> 0;
-        {0, BindLen} -> 1;
-        _ -> 0
+encode_record(close, State) ->
+    function_code(?TTI_LOGOFF, State).
+
+%% The header of a function and of a piggyback: the function code, the
+%% sequence number and (23.1 ext 1 on) the token number.
+function_code(Code, State) ->
+    header(?TTI_FUN, Code, State).
+
+piggyback_code(Code, State) ->
+    header(?TTI_PFN, Code, State).
+
+header(Type, Code, #oraclient{seq=Seq, caps=Caps}) ->
+    Token =
+    case Caps of
+        #caps{field_version=Version} when Version >= ?TNS_CCAP_FIELD_VERSION_23_1_EXT_1 -> <<0>>;  %ub8 token number
+        _ -> <<>>
     end,
-    BatchLen = length(Batch),
-    DefLen = length(Def),
-    DefInd = if DefLen =/= 0 -> 1; true -> 0 end,
-    {Opt, LMax, Max, All8} =
-    case {Cursor, Type} of
-        {0, Type} -> setopts(Type, BindInd, BatchLen, Auto);
-        {Cursor, fetch} -> setopts(fetch, DefInd, 0, Fetch);
-        {Cursor, select} -> setopts(select, cursor, 0, Fetch);
-        {Cursor, Type} -> setopts(Type, cursor, BatchLen, Auto)
-    end,
+    <<Type, Code, Seq, Token/binary>>.
+
+%% Execute
+
+%% The execute message (_write_execute_message): a full execute, which
+%% parses the statement when it has no cursor yet, or the define of the
+%% columns of a query whose cursor is open.
+execute(#exec{cursor_id=CursorId, sql=Sql, kind=Kind, binds=Binds, defines=Defines,
+              prefetch=Prefetch, commit=Commit, rows=Rows} = Exec, #oraclient{caps=Caps} = State) ->
+    Define = Defines =/= [],
+    NumParams = if Define -> 0; true -> length(Binds) end,
+    Parse = CursorId =:= 0 orelse Kind =:= ddl,
+    Query = Kind =:= query,
+    NumExecs = length(Rows),
+    Options =
+        flag(Define, ?TNS_EXEC_OPTION_DEFINE) bor
+        flag(not Define, ?TNS_EXEC_OPTION_EXECUTE) bor
+        flag(Parse, ?TNS_EXEC_OPTION_PARSE) bor
+        flag(Query andalso Prefetch > 0, ?TNS_EXEC_OPTION_FETCH) bor
+        flag(Kind =/= plsql, ?TNS_EXEC_OPTION_NOT_PLSQL) bor
+        flag(Kind =:= plsql andalso NumParams > 0, ?TNS_EXEC_OPTION_PLSQL_BIND) bor
+        flag(NumParams > 0, ?TNS_EXEC_OPTION_BIND) bor
+        flag(Commit, ?TNS_EXEC_OPTION_COMMIT),
+    ExecFlags = flag(not Define, ?TNS_EXEC_FLAGS_IMPLICIT_RESULTSET),
+    Version = Caps#caps.field_version,
     <<
-    ?TTI_FUN,
-    ?TTI_ALL8, Tseq,
-    (encode_sb4(Opt))/binary,               %options
-    (encode_sb4(Cursor))/binary,            %cursor
-    if QueryLen =/= 0 -> 1; true -> 0 end,  %query is empty
-    (encode_sb4(QueryLen))/binary,          %query length
-    if All8 =/= [] -> 1; true -> 0 end,     %all8 is empty
-    (encode_sb4(length(All8)))/binary,      %all8 length
-    0,0,
-    (encode_sb4(LMax))/binary,              %long max value
-    (encode_sb4(Fetch))/binary,             %rows to fetch
-    (encode_sb4(Max))/binary,               %max value
-    BindInd,                                %bindindicator
-    (if BindInd =/= 0 -> encode_sb4(BindLen); true -> <<0>> end)/binary,  %bindcols count
-    0,0,0,0,0,
-    DefInd,                                 %defcols is empty
-    (encode_sb4(DefLen))/binary,            %defcols count
-    0,                                      %registration
-    0,1,
-    0,0,0,0,0,
-    (if QueryLen =/= 0 -> QueryData; true -> <<>> end)/binary,
-    (encode_array(All8))/binary,
-    (case {BindLen, DefLen, QueryLen} of
-        {0, 0, QueryLen} -> <<>>;
-        {BindLen, 0, 0} -> encode_token(rxd, encode_rows(Type, [Bind|Batch]), <<>>);
-        {BindLen, 0, QueryLen} -> encode_token(rxd, encode_rows(Type, [Bind|Batch]), encode_token(oac, Bind, #format{charset=Charset}, <<>>));
-        {0, DefLen, 0} -> encode_token(oac, Def, #format{charset=Charset}, <<>>)
+    (function_code(?TTI_ALL8, State))/binary,
+    (encode_ub4(Options))/binary,           %execute options
+    (encode_ub4(CursorId))/binary,          %cursor id
+    (case Parse of
+        true -> <<1, (encode_ub4(byte_size(Sql)))/binary>>;  %pointer (sql), sql length
+        false -> <<0, 0>>
+    end)/binary,
+    1,                                      %pointer (vector)
+    (encode_ub4(13))/binary,                %al8i4 array length
+    0,                                      %pointer (al8o4)
+    0,                                      %pointer (al8o4l)
+    0,                                      %prefetch buffer size
+    (encode_ub4(Prefetch))/binary,          %prefetch number of rows
+    (encode_ub4(?TNS_MAX_LONG_LENGTH))/binary,  %maximum long size
+    (case NumParams of
+        0 -> <<0, 0>>;                      %pointer (binds), number of binds
+        _ -> <<1, (encode_ub4(NumParams))/binary>>
+    end)/binary,
+    0,                                      %pointer (al8app)
+    0,                                      %pointer (al8txn)
+    0,                                      %pointer (al8txl)
+    0,                                      %pointer (al8kv)
+    0,                                      %pointer (al8kvl)
+    (case Define of
+        true -> <<1, (encode_ub4(length(Defines)))/binary>>;  %pointer (al8doac), number of defines
+        false -> <<0, 0>>
+    end)/binary,
+    0,                                      %registration id (lsb)
+    0,                                      %pointer (al8objlist)
+    1,                                      %pointer (al8objlen)
+    0,                                      %pointer (al8blv)
+    0,                                      %al8blvl
+    0,                                      %pointer (al8dnam)
+    0,                                      %al8dnaml
+    0,                                      %registration id (msb)
+    0,                                      %pointer (al8pidmlrc)
+    0,                                      %al8pidmlrcbl
+    0,                                      %pointer (al8pidmlrcl)
+    (if Version >= ?TNS_CCAP_FIELD_VERSION_12_2 ->
+        <<0,                                %pointer (al8sqlsig)
+          0,                                %SQL signature length
+          0,                                %pointer (SQL ID)
+          0,                                %allocated size of SQL ID
+          0>>;                              %pointer (length of SQL ID)
+        true -> <<>>
+    end)/binary,
+    (if Version >= ?TNS_CCAP_FIELD_VERSION_12_2_EXT1 ->
+        <<0,                                %pointer (chunk ids)
+          0>>;                              %number of chunk ids
+        true -> <<>>
+    end)/binary,
+    (case Parse of
+        true -> <<(raw_bytes_and_length(Sql))/binary, (encode_ub4(1))/binary>>;  %al8i4[0] parse
+        false -> encode_ub4(0)
+    end)/binary,
+    (encode_ub4(if Query, CursorId =:= 0 -> 0; Query -> Prefetch; true -> NumExecs end))/binary,  %al8i4[1] execution count
+    0,0,0,                                  %al8i4[2..4]
+    0,0,                                    %al8i4[5..6] SCN
+    (encode_ub4(flag(Query, 1)))/binary,    %al8i4[7] is query
+    0,                                      %al8i4[8]
+    (encode_ub4(ExecFlags))/binary,         %al8i4[9] execute flags
+    0,                                      %al8i4[10] fetch orientation
+    0,                                      %al8i4[11] fetch pos
+    0,                                      %al8i4[12]
+    (case Define of
+        true -> column_metadata(Defines, Caps);
+        false when NumParams > 0 -> bind_params(Exec, Caps);
+        false -> <<>>
     end)/binary
-    >>;
-encode_record(pig, #oraclient{req={Request,Cursors},seq=Tseq}) ->
-    <<
-    ?TTI_PFN,
-    Request, Tseq,
-    1,
-    (encode_sb4(length(Cursors)))/binary,   %cursors count
-    (encode_array(Cursors))/binary          %cursors
-    >>;
-encode_record(close, #oraclient{seq=Tseq}) ->
-    <<
-    ?TTI_FUN,
-    ?TTI_LOGOFF, Tseq
     >>.
 
-%% The compile time capabilities, sent in the data types message: the
-%% negotiated field version, and the end of response marker (TTC4) only when
-%% the server offered it in the accept packet.
-compile_caps(#oraclient{eor=Eor, field_version=FieldVersion}) ->
-    Base = <<6,1,0,0,106,1,1,0,1,1,1,1,1,1,0,41,144,3,7,3,0,1,0,79,1,55,4,0,0,0,0,12,0,0,6,0,1,1>>,
-    set_caps(Base, [{?TNS_CCAP_FIELD_VERSION, FieldVersion}] ++
-        [{?TNS_CCAP_TTC4, ?TNS_CCAP_END_OF_RESPONSE} || Eor =:= offered]).
+flag(true, Flag) -> Flag;
+flag(false, _Flag) -> 0.
 
-%% Sets the given capability bytes, growing the array with zeros as needed.
-set_caps(Caps, []) ->
-    Caps;
-set_caps(Caps, [{Index, Value}|Rest]) when Index >= byte_size(Caps) ->
-    set_caps(<<Caps/binary, 0:((Index - byte_size(Caps) + 1) * 8)>>, [{Index, Value}|Rest]);
-set_caps(Caps, [{Index, Value}|Rest]) ->
-    <<Head:Index/binary, _, Tail/binary>> = Caps,
-    set_caps(<<Head/binary, Value, Tail/binary>>, Rest).
-
-%% In SQL statements the server expects the values of LONG / LONG RAW binds
-%% (declared length above 4000) after all the other values of a row, while the
-%% bind metadata (oac) keeps the statement order. PL/SQL blocks take them as is.
-encode_rows(block, Rows) ->
-    Rows;
-encode_rows(_Type, [Bind|_] = Rows) ->
-    Mask = [long_bind(Data) || Data <- Bind],
-    case lists:member(true, Mask) of
-        false -> Rows;
-        true -> [long_last(Mask, Row) || Row <- Rows]
+%% The metadata of the binds, then a row of values for each execution unless
+%% they are all return binds (_write_bind_params).
+bind_params(#exec{binds=Binds, rows=Rows} = Exec, Caps) ->
+    Metadata = column_metadata(Binds, Caps),
+    case [B || #format{param=in} = B <- Binds] =/= [] orelse not Exec#exec.returning of
+        true ->
+            iolist_to_binary([Metadata | [[?TTI_RXD, bind_row(Exec, Row, Caps)] || Row <- Rows]]);
+        false ->
+            Metadata
     end.
 
-long_last(Mask, Row) ->
-    Pairs = lists:zip(Mask, Row),
-    [Data || {false, Data} <- Pairs] ++ [Data || {true, Data} <- Pairs].
+%% The values of a row; in SQL statements the long ones (buffer above the
+%% maximum string size) go after all the others (_write_bind_params_row).
+bind_row(#exec{binds=Binds, kind=Kind, returning=Returning}, Row, #caps{max_string_size=Max}) ->
+    Pairs = [{B, V} || {B, V} <- lists:zip(Binds, Row),
+                       not (Returning andalso B#format.param =:= out)],
+    case Kind of
+        plsql ->
+            [value_bytes(B, V) || {B, V} <- Pairs];
+        _ ->
+            [value_bytes(B, V) || {B, V} <- Pairs, B#format.data_length =< Max] ++
+            [value_bytes(B, V) || {B, V} <- Pairs, B#format.data_length > Max]
+    end.
 
-long_bind(Data) when is_binary(Data) -> byte_size(Data) =:= 0 orelse byte_size(Data) > 4000;
-long_bind(Data) when is_list(Data) -> setopts(size, Data) > 4000;
-long_bind(clob) -> true;
-long_bind(_Data) -> false.
+%% The metadata of binds and defines (_write_column_metadata).
+column_metadata(Formats, #caps{field_version=Version}) ->
+    << <<(oac(F, Version))/binary>> || F <- Formats >>.
 
-setopts(all8, {Opts, Fetch, Type}) -> [Opts,Fetch,0,0,0,0,0,Type,0,0,0,0,0];
-setopts(size, Data) when length(Data) > 4000 -> 33554432;  %clob
-setopts(size, _Data) -> 4000.
-
-setopts(fetch, DefInd, _BatchLen, Fetch) ->
-    {32832 bor (DefInd * 16), 0, 2147483647, setopts(all8, {0, Fetch, 1})};
-setopts(select, cursor, _BatchLen, Fetch) ->
-    {32864, 0, 2147483647, setopts(all8,{0, Fetch, 1})};
-setopts(select, BindInd, _BatchLen, _Auto) ->
-    {32801 bor (BindInd * 8), 4294967295, 2147483647, setopts(all8, {1, 0, 1})};
-setopts(change, cursor, BatchLen, Auto) ->
-    {32800 bor (Auto * 256), 0, 2147483647, setopts(all8, {0, 1 + BatchLen, 0})};
-setopts(change, BindInd, BatchLen, Auto) ->
-    {32801 bor (BindInd * 8) bor (Auto * 256), 0, 2147483647, setopts(all8, {1, 1 + BatchLen, 0})};
-setopts(return, cursor, _BatchLen, Auto) ->
-    {1056 bor (Auto * 256), 0, 2147483647, setopts(all8, {0, 1, 0})};
-setopts(return, BindInd, _BatchLen, Auto) ->
-    {1 bor 1056 bor (BindInd * 8) bor (Auto * 256), 0, 2147483647, setopts(all8, {1, 1, 0})};
-setopts(block, cursor, _BatchLen, Auto) ->
-    {1056 bor (Auto * 256), 0, 32760, setopts(all8, {0, 1, 0})};
-setopts(block, BindInd, _BatchLen, Auto) ->
-    {1 bor 1056 bor (BindInd * 8) bor (Auto * 256), 0, 32760, setopts(all8, {1, 1, 0})}.
-
-encode_token([], Acc) -> Acc;
-encode_token([Data|Rest], Acc) -> encode_token(Rest, <<Acc/binary, (encode_token(rxd, Data))/binary>>);
-encode_token(rxd, Data) when is_list(Data) -> encode_chr(Data);
-encode_token(rxd, Data) when is_binary(Data) -> encode_chr(Data);
-encode_token(rxd, Data) when is_number(Data) -> encode_len(encode_number(Data));
-encode_token(rxd, Data) when is_tuple(Data) -> encode_len(encode_date(Data));
-encode_token(rxd, clob) -> <<0>>;
-encode_token(rxd, cursor) -> <<1,0>>;
-encode_token(rxd, null) -> <<0>>.
-
-encode_token(rxd, [], Acc) -> Acc;
-encode_token(rxd, [Data|Rest], Acc) ->
-    encode_token(rxd, Rest, <<Acc/binary, (encode_token(Data, <<?TTI_RXD>>))/binary>>);
-encode_token(oac, Data, #format{charset=Charset}) when is_list(Data) ->
-    encode_token(oac, ?TNS_TYPE_VARCHAR, setopts(size, Data), 16, Charset, 0);
-encode_token(oac, Data, _) when is_binary(Data), byte_size(Data) > 0, byte_size(Data) =< 4000 ->
-    encode_token(oac, ?TNS_TYPE_RAW, 4000, 0, 0, 0);
-encode_token(oac, Data, _) when is_binary(Data) ->
-    encode_token(oac, ?TNS_TYPE_LONGRAW, 33554432, 0, 0, 0);
-encode_token(oac, Data, _) when is_number(Data) -> encode_token(oac, ?TNS_TYPE_NUMBER, 22, 0, 0, 0);
-encode_token(oac, {{_Year,_Mon,_Day}, {_Hour,_Min,_Sec,_Ms}}, _) -> encode_token(oac, ?TNS_TYPE_TIMESTAMP, 11, 0, 0, 0);
-encode_token(oac, {{_Year,_Mon,_Day}, {_Hour,_Min,_Sec,_Ms}, _}, _) -> encode_token(oac, ?TNS_TYPE_TIMESTAMPTZ, 13, 0, 0, 0);
-encode_token(oac, Data, _) when is_tuple(Data) -> encode_token(oac, ?TNS_TYPE_DATE, 7, 0, 0, 0);
-encode_token(oac, clob, #format{charset=Charset}) -> encode_token(oac, ?TNS_TYPE_VARCHAR, 33554432, 16, Charset, 0);
-encode_token(oac, cursor, #format{charset=Charset}) -> encode_token(oac, ?TNS_TYPE_REFCURSOR, 1, 0, Charset, 0);
-encode_token(oac, null, Format) -> encode_token(oac, [], Format).
-
-encode_token(oac, [], _, Acc) when is_binary(Acc) -> Acc;
-encode_token(oac, [Data|Rest], Format, Acc) when is_record(Data, format), is_binary(Acc) ->
-    encode_token(oac, Rest, Format, <<Acc/binary, (encode_token(oac, Data, Format,[]))/binary>>);
-encode_token(oac, [Data|Rest], Format, Acc) when is_binary(Acc) ->
-    encode_token(oac, Rest, Format, <<Acc/binary, (encode_token(oac, Data, Format))/binary>>);
-encode_token(oac, #format{data_type=DataType,charset=Charset}, _, Acc) when is_list(Acc), ?IS_CHAR_TYPE(DataType) ->
-    encode_token(oac, ?TNS_TYPE_VARCHAR, 4000, 16, Charset, 0);
-encode_token(oac, #format{data_type=DataType,charset=Charset}, _, Acc) when is_list(Acc), ?IS_LOB_TYPE(DataType) ->
-    encode_token(oac, DataType, 0, 33554432, Charset, 33554432);
-encode_token(oac, #format{data_type=DataType,data_length=Length,charset=Charset}, _, Acc) when is_list(Acc) ->
-    encode_token(oac, DataType, Length, 0, Charset, 0).
-
-encode_token(oac, DataType, Length, Flag, Charset, Max) ->
-    <<
-    (encode_ub1(DataType))/binary,  %data type
-    3,                              %flags
-    0,                              %precision
-    0,                              %data scale
-    (encode_sb4(Length))/binary,    %max data length
-    0,                              %max number of array elem
-    (encode_sb4(Flag))/binary,      %cont flags
-    0,                              %OID
-    0,                              %version
-    (encode_sb4(Charset))/binary,   %character set id
-    case Charset of                 %character set form
-        ?AL16UTF16_CHARSET -> 2;
-        _ -> 1
+oac(#format{data_type=DataType0, data_length=BufferSize0, csfrm=Csfrm}, Version) ->
+    {DataType, BufferSize} =
+    case DataType0 of
+        _ when ?IS_ROWID_TYPE(DataType0); DataType0 =:= ?TNS_TYPE_UROWID ->
+            {?TNS_TYPE_VARCHAR, ?TNS_MAX_UROWID_LENGTH};
+        _ -> {DataType0, BufferSize0}
     end,
-    (encode_sb4(Max))/binary        %mxlc
+    {ContFlag, BufferSize2, PrefetchLength} =
+    case DataType of
+        _ when ?IS_LOB_TYPE(DataType) -> {?TNS_LOB_PREFETCH_FLAG, BufferSize, 0};
+        ?TNS_TYPE_JSON -> {?TNS_LOB_PREFETCH_FLAG, ?TNS_JSON_MAX_LENGTH, ?TNS_JSON_MAX_LENGTH};
+        ?TNS_TYPE_VECTOR -> {?TNS_LOB_PREFETCH_FLAG, ?TNS_VECTOR_MAX_LENGTH, ?TNS_VECTOR_MAX_LENGTH};
+        _ -> {0, BufferSize, 0}
+    end,
+    <<
+    DataType,
+    ?TNS_BIND_USE_INDICATORS,               %flags
+    0,                                      %precision
+    0,                                      %scale
+    (encode_ub4(BufferSize2))/binary,
+    0,                                      %max number of array elements
+    (encode_ub8(ContFlag))/binary,
+    0,                                      %OID
+    0,                                      %version
+    (encode_ub2_var(if Csfrm =/= 0 -> ?TNS_CHARSET_UTF8; true -> 0 end))/binary,  %character set id
+    Csfrm,                                  %character set form
+    (encode_ub4(PrefetchLength))/binary,    %max chars (LOB prefetch)
+    (if Version >= ?TNS_CCAP_FIELD_VERSION_12_2 -> <<0>>; true -> <<>> end)/binary  %oaccolid
     >>.
 
-encode_array(Data) ->
-    encode_array(Data,<<>>).
+%% The metadata of a bind value (OracleMetadata.from_value with the sizes of
+%% _finalize_init): strings as VARCHAR and binaries as RAW of their length
+%% (the largest of the rows), numbers as NUMBER, dates as DATE, TIMESTAMP or
+%% TIMESTAMP WITH TIME ZONE. {out, Type} binds take the type of a value of
+%% that type.
+bind_format({out, Type}, Values) ->
+    Format =
+    case encode_helper(param, Type) of
+        [] -> #format{data_type=?TNS_TYPE_VARCHAR, data_length=4000, max_size=4000, csfrm=?CS_FORM_IMPLICIT};
+        <<>> -> #format{data_type=?TNS_TYPE_RAW, data_length=4000};
+        Value -> bind_format(Value, Values)
+    end,
+    Format#format{param=out};
+bind_format({in, Value}, Values) ->
+    bind_format(Value, Values);
+bind_format(Value, Values) when is_list(Value); Value =:= null ->
+    case [V || V <- Values, is_list(V) orelse is_binary(V)] of
+        [] when Value =:= null -> varchar(1);
+        Strings -> varchar(lists:max([0|[byte_size(bin(V)) || V <- Strings]]))
+    end;
+bind_format(Value, Values) when is_binary(Value) ->
+    Size = lists:max([0|[byte_size(V) || V <- Values, is_binary(V)]]),
+    #format{data_type=?TNS_TYPE_RAW, data_length=if Size =:= 0 -> 4000; true -> Size end};
+bind_format(Value, _Values) when is_number(Value) ->
+    #format{data_type=?TNS_TYPE_NUMBER, data_length=22};
+bind_format({{_,_,_}, {_,_,_,_}}, _Values) ->
+    #format{data_type=?TNS_TYPE_TIMESTAMP, data_length=11};
+bind_format({{_,_,_}, {_,_,_,_}, _}, _Values) ->
+    #format{data_type=?TNS_TYPE_TIMESTAMPTZ, data_length=13};
+bind_format(Value, _Values) when is_tuple(Value) ->
+    #format{data_type=?TNS_TYPE_DATE, data_length=7};
+bind_format(clob, _Values) ->
+    #format{data_type=?TNS_TYPE_VARCHAR, data_length=33554432, csfrm=?CS_FORM_IMPLICIT};
+bind_format(cursor, _Values) ->
+    #format{data_type=?TNS_TYPE_REFCURSOR, data_length=4}.
 
-encode_array([],Acc) ->
-    Acc;
-encode_array([H|T],Acc) ->
-    encode_array(T,<<Acc/binary,(encode_sb4(H))/binary>>).
+varchar(MaxSize) ->
+    #format{data_type=?TNS_TYPE_VARCHAR, data_length=max(MaxSize, 1) * 4,
+            max_size=MaxSize, csfrm=?CS_FORM_IMPLICIT}.
 
-encode_len(Data) ->
-    Length = byte_size(Data),
-    <<Length, Data:Length/binary>>.
+bin(V) when is_binary(V) -> V;
+bin(V) -> encode_str(V).
+
+%% The bytes of a bind value (_write_bind_params_column).
+value_bytes(#format{param=out, data_type=?TNS_TYPE_REFCURSOR}, _Value) ->
+    <<1, 0>>;
+value_bytes(#format{param=out}, _Value) ->
+    <<0>>;
+value_bytes(_Format, null) ->
+    <<0>>;
+value_bytes(_Format, {in, Value}) ->
+    value_bytes(_Format, Value);
+value_bytes(#format{data_type=?TNS_TYPE_RAW}, Value) when is_binary(Value) ->
+    raw_bytes_and_length(Value);
+value_bytes(_Format, Value) when is_list(Value); is_binary(Value) ->
+    raw_bytes_and_length(bin(Value));
+value_bytes(_Format, Value) when is_number(Value) ->
+    raw_bytes_and_length(encode_number(Value));
+value_bytes(_Format, Value) when is_tuple(Value) ->
+    raw_bytes_and_length(encode_date(Value)).
+
+%% Bytes after their length: up to 252 bytes after a length byte, longer ones
+%% in chunks of up to 32767 bytes (ub4 length each) ending with a zero length.
+raw_bytes_and_length(Data) when byte_size(Data) =< ?TNS_MAX_SHORT_LENGTH ->
+    <<(byte_size(Data)), Data/binary>>;
+raw_bytes_and_length(Data) ->
+    <<?TNS_LONG_LENGTH_INDICATOR, (chunks(Data))/binary, 0>>.
+
+chunks(<<Chunk:?TNS_CHUNK_SIZE/binary, Rest/binary>>) when Rest =/= <<>> ->
+    <<(encode_ub4(?TNS_CHUNK_SIZE))/binary, Chunk/binary, (chunks(Rest))/binary>>;
+chunks(Chunk) ->
+    <<(encode_ub4(byte_size(Chunk)))/binary, Chunk/binary>>.
+
+%% Integers
+
+encode_ub4(0) -> <<0>>;
+encode_ub4(Data) ->
+    Bin = binary:encode_unsigned(Data),
+    <<(byte_size(Bin)), Bin/binary>>.
+
+encode_ub8(Data) -> encode_ub4(Data).
+
+encode_ub2_var(Data) -> encode_ub4(Data).
 
 encode_keyval(Key, Value) ->
     encode_keyval(list_to_binary(Key), encode_str(Value), 0).
@@ -432,8 +470,9 @@ encode_keyval(Key, Value, Data) ->
     BinValue = if ValueLen =/= 0 -> <<(encode_sb4(ValueLen))/binary, (encode_len(Value))/binary>>; true -> <<0>> end,
     <<BinKey/binary, BinValue/binary, (encode_sb4(Data))/binary>>.
 
-encode_ub1(Data) ->
-    <<Data:8>>.
+encode_len(Data) ->
+    Length = byte_size(Data),
+    <<Length, Data:Length/binary>>.
 
 encode_ub2(Data) ->
     <<Data:16/little>>.
@@ -455,10 +494,6 @@ encode_sb4(Data) ->
         _ -> <<4,F,S,T,L>>
     end.
 
-%encode_dalc(<<>>) -> <<0>>;
-%encode_dalc(Data) when byte_size(Data) > 64 -> <<(encode_chr(Data))/binary>>.
-%encode_dalc(Data) -> <<(encode_sb4(byte_size(Data)))/binary,(encode_chr(Data))/binary>>.
-
 encode_str(Data) ->
     try list_to_binary(Data) of    %latin-1
         Bin -> Bin
@@ -466,19 +501,7 @@ encode_str(Data) ->
         error:_ -> unicode:characters_to_binary(Data)
     end.
 
-encode_chr(Data) when is_list(Data) ->
-    encode_chr(encode_str(Data));
-encode_chr(Data) when byte_size(Data) > 64 ->
-    encode_chr(Data,<<254>>);
-encode_chr(Data) ->
-    encode_len(Data).
-
-encode_chr(Data,Acc) when byte_size(Data) > 64 ->
-    <<Bin:64/binary,Rest/bits>> = Data,
-    encode_chr(Rest,<<Acc/binary, 64, Bin/binary>>);
-encode_chr(Data,Acc) ->
-    Length = byte_size(Data),
-    <<Acc/binary, Length, Data:Length/binary, 0>>.
+%% Values
 
 encode_number(+0.0) -> <<128>>;
 encode_number(0) -> <<128>>;
@@ -525,6 +548,8 @@ lnxfmt([I|L], Data) when Data > 0 ->
 lnxfmt([I|L], Data) when Data < 0 ->
     [(I+192+1 bxor 255)|[ 101-N || N <- L]]++[102].
 
+%% DATE (7 bytes), TIMESTAMP (11 bytes; 7 when the fractional seconds are
+%% zero, as the protocol requires) and TIMESTAMP WITH TIME ZONE (13 bytes).
 encode_date({{Year,Mon,Day}, {Hour,Min,Sec}}) ->
     <<
     (Year div 100 + 100),
@@ -535,6 +560,8 @@ encode_date({{Year,Mon,Day}, {Hour,Min,Sec}}) ->
     (Min + 1),
     (Sec + 1)
     >>;
+encode_date({{Year,Mon,Day}, {Hour,Min,Sec,0}}) ->
+    encode_date({{Year,Mon,Day}, {Hour,Min,Sec}});
 encode_date({{Year,Mon,Day}, {Hour,Min,Sec,Ms}}) ->
     <<(encode_date({{Year,Mon,Day}, {Hour,Min,Sec}}))/binary, (Ms * 1000):4/integer-unit:8>>;
 encode_date({Year,Mon,Day}) when is_integer(Year)  ->
@@ -543,12 +570,14 @@ encode_date({{Year,Mon,Day}, {Hour,Min,Sec,Ms}, Offset}) when is_integer(Offset)
     Secs = calendar:datetime_to_gregorian_seconds({{Year,Mon,Day}, {Hour,Min,Sec}}),
     {D, T} = calendar:gregorian_seconds_to_datetime(Secs - Offset),
     {H, M} = {(Offset div 3600 + 20), (Offset rem 3600 div 60 + 60)},
-    <<(encode_date({D, erlang:append_element(T,Ms)}))/binary,H,M>>;
+    <<(timestamp(D, T, Ms))/binary,H,M>>;
 encode_date({{Year,Mon,Day}, {Hour,Min,Sec,Ms}, Data}) when is_list(Data) ->
     Zoneid = get_key(list_to_binary(Data), ?ZONEIDMAP),
-    {D, T} = {{Year,Mon,Day}, {Hour,Min,Sec}},
     {H, M} = {((Zoneid band 8128) bsr 6) bor 128, ((Zoneid band 63) bsl 2)},
-    <<(encode_date({D, erlang:append_element(T,Ms)}))/binary,H,M>>.
+    <<(timestamp({Year,Mon,Day}, {Hour,Min,Sec}, Ms))/binary,H,M>>.
+
+timestamp(D, T, Ms) ->
+    <<(encode_date({D, T}))/binary, (Ms * 1000):32>>.
 
 get_key(Data, [{Key, {_,Value}} | M]) ->
     case binary:match(Data,list_to_binary(Value)) of
@@ -558,8 +587,6 @@ get_key(Data, [{Key, {_,Value}} | M]) ->
 get_key(Data, [_|M]) -> get_key(Data, M);
 get_key(_Data, []) -> 28.
 
-encode_helper(type, Data) ->
-    {lists:member(Data, ["SELECT", "WITH"]), lists:member(Data, ["INSERT", "UPDATE", "DELETE", "MERGE"])};
 encode_helper(param, Data) ->
     Values =
     [
@@ -575,7 +602,7 @@ encode_helper(utf16, Data) ->
         false -> Data;
         true -> ?UTF8_CHARSET
     end;
-encode_helper(sess, L) ->
+encode_helper(sess, _L) ->
     Secs = calendar:datetime_to_gregorian_seconds(calendar:local_time()),
     USecs = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
-    "ALTER SESSION SET TIME_ZONE='"++?DECODER:decode_helper(tz, (Secs - USecs) div 3600, L)++"'".
+    "ALTER SESSION SET TIME_ZONE='"++orax_values:tz_offset((Secs - USecs) div 3600, 0)++"'".

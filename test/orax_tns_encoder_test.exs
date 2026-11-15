@@ -3,66 +3,111 @@ defmodule OraxTnsEncoderTest do
 
   require Record
 
-  Record.defrecordp :oraclient,
-    Record.extract(:oraclient, from: "include/orax.hrl")
-  Record.defrecordp :format,
-    Record.extract(:format, from: "include/orax.hrl")
+  Record.defrecordp :oraclient, Record.extract(:oraclient, from: "include/orax.hrl")
+  Record.defrecordp :caps, Record.extract(:caps, from: "include/orax.hrl")
+  Record.defrecordp :exec, Record.extract(:exec, from: "include/orax.hrl")
+  Record.defrecordp :format, Record.extract(:format, from: "include/orax.hrl")
 
+  @varchar 1
+  @number 2
   @raw 23
-  @long_raw 24
+  @rxd 7
 
-  defp oac_type(value) do
-    <<type, _rest::binary>> = :orax_tns_encoder.encode_token(:oac, value, format(charset: 871))
-    type
-  end
+  defp bind_format(value), do: :orax_tns_encoder.bind_format(value, [value])
 
-  defp exec(type, binds) do
+  defp encode_exec(kind, binds, rows, opts \\ []) do
+    all = [binds | rows]
+
+    formats =
+      binds
+      |> Enum.with_index()
+      |> Enum.map(fn {b, i} -> :orax_tns_encoder.bind_format(b, Enum.map(all, &Enum.at(&1, i))) end)
+
     record =
-      oraclient(type: type, auto: 1, charset: 871, fetch: 10, seq: 1,
-        req: {0, ~c"SELECT 1 FROM dual", binds, [], []})
+      oraclient(seq: 1, caps: caps(field_version: Keyword.get(opts, :field_version, 24), max_string_size: 32767),
+        req: exec(sql: "SQL", kind: kind, binds: formats, rows: [binds | rows]))
 
-    :orax_tns_encoder.encode_record(:exec, record)
+    {:orax_tns_encoder.encode_record(:exec, record), formats}
   end
 
-  # Encoded row data (TTI_RXD + values) for the given rows, in the given order.
-  defp rxd(rows), do: :orax_tns_encoder.encode_token(:rxd, rows, <<>>)
-
-  test "binary binds up to 4000 bytes are RAW, larger ones LONG RAW" do
-    assert oac_type(<<1>>) == @raw
-    assert oac_type(:binary.copy(<<1>>, 4000)) == @raw
-    assert oac_type(:binary.copy(<<1>>, 4001)) == @long_raw
+  # The row data of the given rows, values in the given order.
+  defp rxd(formats_and_rows) do
+    for row <- formats_and_rows, into: <<>> do
+      <<@rxd, (for {f, v} <- row, into: <<>>, do: :orax_tns_encoder.value_bytes(f, v))::binary>>
+    end
   end
 
-  test "values of long binds go after the other values of a SQL row" do
-    long = :binary.copy(<<1>>, 5000)
-    data = exec(:change, [long, 42, ~c"abc"])
+  describe "bind metadata" do
+    test "strings are VARCHAR with 4 bytes per byte of the longest value" do
+      assert format(data_type: @varchar, data_length: 12, csfrm: 1) = bind_format(~c"abc")
+      assert format(data_length: 20) = :orax_tns_encoder.bind_format(~c"a", [~c"a", ~c"hello"])
+    end
 
-    assert String.ends_with?(data, rxd([[42, ~c"abc", long]]))
+    test "binaries are RAW of their length, numbers NUMBER" do
+      assert format(data_type: @raw, data_length: 5000) = bind_format(:binary.copy(<<1>>, 5000))
+      assert format(data_type: @raw, data_length: 4000) = bind_format(<<>>)
+      assert format(data_type: @number, data_length: 22) = bind_format(42)
+    end
+
+    test "out binds take the type asked for" do
+      assert format(param: :out, data_type: @varchar, data_length: 4000) = bind_format({:out, :varchar})
+      assert format(param: :out, data_type: @number) = bind_format({:out, :integer})
+    end
   end
 
-  test "rows without long binds keep their order" do
-    raw = :crypto.strong_rand_bytes(32)
-    data = exec(:select, [raw, 42])
+  describe "bind values" do
+    test "values up to 252 bytes follow their length, longer ones go in chunks" do
+      assert :orax_tns_encoder.value_bytes(bind_format(~c"ab"), ~c"ab") == <<2, "ab">>
+      long = :binary.copy(<<1>>, 40000)
 
-    assert String.ends_with?(data, rxd([[raw, 42]]))
+      assert :orax_tns_encoder.value_bytes(bind_format(long), long) ==
+               <<254, 2, 0x7F, 0xFF, :binary.part(long, 0, 32767)::binary, 2, 0x1C, 0x41,
+                 :binary.part(long, 32767, 7233)::binary, 0>>
+    end
+
+    test "nulls and out binds are sent as null" do
+      assert :orax_tns_encoder.value_bytes(bind_format(:null), :null) == <<0>>
+      assert :orax_tns_encoder.value_bytes(bind_format({:out, :varchar}), :null) == <<0>>
+    end
   end
 
-  test "PL/SQL blocks keep long binds in place" do
-    long = :binary.copy(<<1>>, 5000)
-    data = exec(:block, [long, 42])
+  describe "execute" do
+    test "values of long binds go after the other values of a SQL row" do
+      long = :binary.copy(<<1>>, 40000)
+      {data, [fl, fn_, fs]} = encode_exec(:dml, [long, 42, ~c"abc"], [])
 
-    assert String.ends_with?(data, rxd([[long, 42]]))
-  end
+      assert String.ends_with?(data, rxd([[{fn_, 42}, {fs, ~c"abc"}, {fl, long}]]))
+    end
 
-  test "batch rows are reordered like the first row" do
-    long = :binary.copy(<<1>>, 5000)
-    record =
-      oraclient(type: :change, auto: 1, charset: 871, fetch: 10, seq: 1,
-        req: {0, ~c"INSERT INTO t VALUES (:1, :2)", [long, 1], [[long, 2]], []})
+    test "rows without long binds keep their order" do
+      raw = :crypto.strong_rand_bytes(32)
+      {data, [fr, fn_]} = encode_exec(:query, [raw, 42], [])
 
-    data = :orax_tns_encoder.encode_record(:exec, record)
+      assert String.ends_with?(data, rxd([[{fr, raw}, {fn_, 42}]]))
+    end
 
-    assert String.ends_with?(data, rxd([[1, long], [2, long]]))
+    test "PL/SQL blocks keep long binds in place" do
+      long = :binary.copy(<<1>>, 40000)
+      {data, [fl, fn_]} = encode_exec(:plsql, [long, 42], [])
+
+      assert String.ends_with?(data, rxd([[{fl, long}, {fn_, 42}]]))
+    end
+
+    test "batch rows are reordered like the first row" do
+      long = :binary.copy(<<1>>, 40000)
+      {data, [fl, fn_]} = encode_exec(:dml, [long, 1], [[long, 2]])
+
+      assert String.ends_with?(data, rxd([[{fn_, 1}, {fl, long}], [{fn_, 2}, {fl, long}]]))
+    end
+
+    test "the function header carries the token number from field version 23.1 ext 1 on" do
+      {data, _} = encode_exec(:query, [], [], field_version: 24)
+      assert <<3, 94, 1, 0, _::binary>> = data
+
+      {data, _} = encode_exec(:query, [], [], field_version: 12)
+      assert <<3, 94, 1, options, _::binary>> = data
+      assert options != 0
+    end
   end
 
   defp login(desc), do: :orax_tns_encoder.encode_record(:login, oraclient(sdu: 8192, auth: desc))
@@ -89,21 +134,32 @@ defmodule OraxTnsEncoderTest do
     assert byte_size(connect) == 74 - 8
   end
 
-  # compile time capabilities as sent before they were built by a function
-  @caps_11_2 <<38, 6, 1, 0, 0, 106, 1, 1, 6, 1, 1, 1, 1, 1, 1, 0, 41, 144, 3, 7, 3, 0, 1, 0,
-               79, 1, 55, 4, 0, 0, 0, 0, 12, 0, 0, 6, 0, 1, 1>>
-  @caps_11_2_eor <<41, 6, 1, 0, 0, 106, 1, 1, 6, 1, 1, 1, 1, 1, 1, 0, 41, 144, 3, 7, 3, 0, 1, 0,
-                   79, 1, 55, 4, 0, 0, 0, 0, 12, 0, 0, 6, 0, 1, 1, 0, 0, 0x20>>
-
-  defp dty_caps(record) do
-    <<2, _charsets::binary-size(4), 1, length, caps::binary-size(length), _::binary>> =
+  defp dty(record) do
+    <<2, 873::little-16, 873::little-16, 3, length, caps::binary-size(length), rest::binary>> =
       :orax_tns_encoder.encode_record(:dty, record)
 
-    <<length, caps::binary>>
+    <<runtime_length, _runtime::binary-size(runtime_length), table::binary>> = rest
+    {caps, table}
   end
 
-  test "field version 6 compile caps are unchanged, with and without end of response" do
-    assert dty_caps(oraclient(charset: 873, field_version: 6, eor: false)) == @caps_11_2
-    assert dty_caps(oraclient(charset: 873, field_version: 6, eor: :offered)) == @caps_11_2_eor
+  test "compile caps carry the field version, ub2 data types and end of response if offered" do
+    {caps, _} = dty(oraclient(charset: 873, caps: caps(field_version: 24), eor: false))
+    assert byte_size(caps) == 55
+    assert :binary.at(caps, 7) == 24
+    assert :binary.at(caps, 27) == 1
+    assert :binary.at(caps, 40) == 0
+
+    {caps, _} = dty(oraclient(charset: 873, caps: caps(field_version: 12), eor: :offered))
+    assert :binary.at(caps, 7) == 12
+    assert :binary.at(caps, 40) == 0x20
+  end
+
+  test "the data types table is sent as ub2 entries ending with a zero type" do
+    {_, table} = dty(oraclient(charset: 873, caps: caps(field_version: 24), eor: false))
+    assert byte_size(table) == 322 * 8 + 2
+    assert <<1::16, 1::16, 1::16, 0::16, 2::16, 2::16, 10::16, 0::16, _::binary>> = table
+    assert binary_part(table, byte_size(table) - 2, 2) == <<0, 0>>
+    # VECTOR is negotiated as itself
+    assert :binary.match(table, <<127::16, 127::16, 1::16, 0::16>>) != :nomatch
   end
 end

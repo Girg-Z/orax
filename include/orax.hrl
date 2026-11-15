@@ -32,16 +32,14 @@
     socket = undefined,
     conn_state = disconnected :: disconnected | connected | auth_negotiate,
     auto = 1 :: 1 | 0,
-    type = select  :: select  | block | change | return | fetch,
     auth,
     charset,
     fetch,
     sdu,
     server,
     timeouts,
-    cursors,
-    defcols,
-    params = [],
+    cursors = #{},      %statement cache: {sql checksum, bind types} => {cursor id, columns}
+    close = [],         %cursors to close, piggybacked on the next execute
     env = [],
     passwd,
     req,
@@ -49,7 +47,7 @@
     buf = <<>>,         %bytes received after the last whole packet
     version = 0,        %negotiated TNS version
     eor = false,        %the server marks the end of each response (offered: not asked yet)
-    field_version = ?TNS_CCAP_FIELD_VERSION_11_2,  %TTC field version, negotiated with the server
+    caps,               %#caps{}: the TTC capabilities negotiated with the server
     break = false       %recovering from a break: no new break on timeout
 }).
 
@@ -61,6 +59,69 @@
     server_runtime_caps = <<>>,
     max_string_size = 4000,
     end_of_response = false     %the server marks the end of each response
+}).
+
+%% The metadata of a column (describe info) or of a bind, after the
+%% OracleMetadata of python-oracledb. data_type is the type the values are
+%% read as: CLOB/BLOB columns are defined as LONG/LONG RAW, so their content
+%% comes inline.
+-record(format, {
+    column_name = <<>>,
+    param = in :: in | out,
+    data_type,
+    data_length = 0,        %buffer size
+    data_scale = 0,
+    data_precision = 0,
+    csfrm = 0,              %character set form: 1 implicit, 2 national (UTF-16)
+    max_size = 0,
+    is_json = false,
+    is_oson = false,        %OSON in a BLOB / RAW column: decoded as JSON
+    vector_dimensions = 0,  %VECTOR columns (field version 23.4 on)
+    vector_format = 0,
+    vector_flags = 0
+}).
+
+%% An execute request (thin/messages/execute.pyx): a full execute of the
+%% statement, or a define of the columns of an open cursor (defines =/= []).
+-record(exec, {
+    cursor_id = 0,
+    sql = <<>>,
+    kind = other :: query | dml | plsql | ddl | other,
+    returning = false,      %DML with RETURNING INTO: out binds are return binds
+    binds = [] :: [#format{}],
+    rows = [[]],            %the values of the binds, one list per execution
+    defines = [] :: [#format{}],
+    prefetch = 0,           %rows to fetch with the execute (queries)
+    commit = false
+}).
+
+%% The state of a response being decoded, after the Message classes of
+%% python-oracledb (messages/base.pyx): each message type updates it.
+-record(resp, {
+    caps = #caps{},
+    msg = call :: protocol | data_types | auth | call | execute,
+    %% execute and fetch
+    in_fetch = false,       %the row data are the rows of a query
+    returning = false,      %the row data are the values of the return binds
+    binds = [],             %#format{} of the binds, in statement order
+    columns = [],           %#format{} of the columns of the query
+    out = [],               %#format{} of the values in the row data
+    bit_vector,             %columns sent in the next row (undefined: all)
+    rows = [],              %rows, or values of out binds, last first
+    last_row,               %the previous row: columns not sent are copied from it
+    cursor_id = 0,
+    %% end of the call
+    call_status = 0,
+    error_num = 0,
+    error_pos = 0,
+    error_message = [],
+    rowcount = 0,
+    call_ended = false,     %status or error received
+    flush_out_binds = false,
+    end_of_response = false,
+    %% protocol, data types and authentication
+    server_caps,            %{compile caps, runtime caps}
+    session_data = []       %{key, value, flags} of the authentication
 }).
 
 -record(logon, {
@@ -77,27 +138,6 @@
     speedy_key
 }).
 
--record(format, {
-    column_name = <<>>,
-    param = in :: in | out,
-    data_type,
-    data_length,
-    data_scale,
-    charset,
-    data_precision
-}).
-
--define(IS_FIXED_TYPE(DataType),
-    ?IS_NUMBER_TYPE(DataType);
-    ?IS_BINARY_TYPE(DataType);
-    ?IS_DATE_TYPE(DataType);
-    ?IS_INTERVAL_TYPE(DataType)
-).
-
--define(IS_NULL_TYPE(DataType),
-    DataType =/= ?TNS_TYPE_LONG,
-    DataType =/= ?TNS_TYPE_LONGRAW
-).
 
 -define(IS_CHAR_TYPE(DataType),
     DataType =:= ?TNS_TYPE_CHAR;

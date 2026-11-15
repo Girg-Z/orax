@@ -7,6 +7,8 @@ defmodule Orax.Integration do
   # created by test/support/create_test_user.sql).
   # ORAX_TEST_SSL=1 connects over TLS checking the server certificate against
   # the system CAs (e.g. Autonomous Database with TLS and no wallet).
+  # ORAX_TEST_TTC_FIELD_VERSION lowers the TTC field version the driver asks
+  # for (e.g. 12, the one of 19c), to test older message layouts on 26ai.
 
   def config(extra \\ []) do
     {extra_params, extra} = Keyword.pop(extra, :parameters, [])
@@ -17,11 +19,18 @@ defmodule Orax.Integration do
       username: System.get_env("ORAX_TEST_USER", "orax_test"),
       password: System.get_env("ORAX_TEST_PASSWORD", "OraxTest1"),
       database: System.get_env("ORAX_TEST_DATABASE", "FREEPDB1"),
-      parameters: Keyword.merge(ssl_parameters(), extra_params),
+      parameters: ssl_parameters() |> Keyword.merge(field_version_parameters()) |> Keyword.merge(extra_params),
       pool_size: 1,
       log: false
     ]
     |> Keyword.merge(extra)
+  end
+
+  defp field_version_parameters do
+    case System.get_env("ORAX_TEST_TTC_FIELD_VERSION") do
+      nil -> []
+      version -> [ttc_field_version: String.to_integer(version)]
+    end
   end
 
   defp ssl_parameters do

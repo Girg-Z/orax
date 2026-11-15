@@ -29,6 +29,17 @@ First release of orax, forked from
   * Decode row headers repeated between rows in `FOR UPDATE` fetches.
   * Fix TLS socket options and decode chunked RPA keywords.
   * Fix RAW binds corrupting the binds that follow them.
+  * Rewrite the TTC message layer after python-oracledb thin mode: the
+    capabilities and data types of python-oracledb are negotiated, with the
+    TTC field version of 23.4 on 26ai and 19.1 on 19c, and each message is
+    decoded by a function of its own.
+  * Fetch CLOB and BLOB columns as LONG and LONG RAW, so their content comes
+    with the rows.
+  * Decode JSON (OSON) columns into maps and lists, VECTOR columns into
+    `{format, values}` tuples and BOOLEAN columns into `true`/`false` on 26ai.
+  * Keep the sign of negative `INTERVAL DAY TO SECOND` values under a day.
+  * Bind RAW values longer than 4000 bytes.
+  * The client character set defaults to AL32UTF8.
 
 ### Ecto adapter
 
