@@ -63,6 +63,19 @@ defmodule OraxTnsEncoderTest do
   end
 
   describe "bind values" do
+    # The bytes python-oracledb 26.1 sends for array.array("f", [1.5, 2.0, -3.25]):
+    # the value based QLocator, then the VECTOR image.
+    test "a vector is a QLocator and its image, as python-oracledb sends it" do
+      vector = {:float32, [1.5, 2.0, -3.25]}
+      assert format(data_type: 127, data_length: 1_048_576) = bind_format(vector)
+
+      assert :orax_tns_encoder.value_bytes(bind_format(vector), vector) ==
+               Base.decode16!(
+                 "01282800260004610800000001000000000000001D00000000000000000000000000000000" <>
+                   "0000000000001DDB00001202000000030000000000000000BFC00000C00000003FAFFFFF"
+               )
+    end
+
     test "values up to 252 bytes follow their length, longer ones go in chunks" do
       assert :orax_tns_encoder.value_bytes(bind_format(~c"ab"), ~c"ab") == <<2, "ab">>
       long = :binary.copy(<<1>>, 40000)

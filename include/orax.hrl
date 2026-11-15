@@ -166,6 +166,16 @@
     DataType =:= ?TNS_TYPE_RID
 ).
 
+%% A VECTOR value, as orax_vector encodes and decodes it.
+-define(IS_VECTOR(Value),
+    (is_tuple(Value) andalso tuple_size(Value) =:= 2 andalso is_list(element(2, Value))
+     andalso (element(1, Value) =:= float32 orelse element(1, Value) =:= float64
+              orelse element(1, Value) =:= int8));
+    (is_tuple(Value) andalso tuple_size(Value) =:= 2 andalso element(1, Value) =:= binary
+     andalso is_binary(element(2, Value)));
+    (is_tuple(Value) andalso tuple_size(Value) =:= 5 andalso element(1, Value) =:= sparse)
+).
+
 -define(IS_LOB_TYPE(DataType),
     DataType =:= ?TNS_TYPE_CLOB;
     DataType =:= ?TNS_TYPE_BLOB

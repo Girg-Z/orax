@@ -293,11 +293,25 @@ call(Type, State, Request) ->
 %% cursor whose columns are defined after the describe (CLOB/BLOB as
 %% LONG/LONG RAW) before the rows are fetched; the cursor and its columns are
 %% kept for the next executions of the statement with binds of the same types.
-execute(#oraclient{cursors=Cursors, fetch=Fetch, auto=Auto} = State, Query, Bind, Batch, Mode) ->
+execute(State, Query, Bind, Batch, Mode) ->
     {Kind, Binds} = statement(Query, Bind),
-    Type = result_type(Kind, Binds),
     Rows = [[bind_value(B) || B <- Row] || Row <- [Binds|Batch]],
     Formats = [?ENCODER:bind_format(B, Values) || {B, Values} <- lists:zip(Binds, columns_of(Rows))],
+    case supported(Formats, State) of
+        ok -> execute(State, Query, Kind, Binds, Rows, Formats, Mode);
+        {error, Reason} -> {error, local, Reason, State}
+    end.
+
+%% VECTOR values travel as such from the TTC field version of 23.4 on.
+supported(Formats, #oraclient{caps=#caps{field_version=Version}}) ->
+    case [F || #format{data_type=?TNS_TYPE_VECTOR} = F <- Formats] of
+        [_|_] when Version < ?TNS_CCAP_FIELD_VERSION_23_4 ->
+            {error, <<"VECTOR binds are not supported before Oracle Database 23.4">>};
+        _ -> ok
+    end.
+
+execute(#oraclient{cursors=Cursors, fetch=Fetch, auto=Auto} = State, Query, Kind, Binds, Rows, Formats, Mode) ->
+    Type = result_type(Kind, Binds),
     Sql = ?ENCODER:encode_str(Query),
     Key = {erlang:crc32(Sql), [F#format.data_type || F <- Formats]},
     {CursorId, Columns} =

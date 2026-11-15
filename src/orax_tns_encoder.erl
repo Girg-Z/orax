@@ -402,6 +402,8 @@ bind_format(Value, Values) when is_binary(Value); is_list(Value) ->
 bind_format({raw, Value}, Values) when is_binary(Value) ->
     Size = lists:max([0|[byte_size(V) || {raw, V} <- Values]]),
     #format{data_type=?TNS_TYPE_RAW, data_length=if Size =:= 0 -> 4000; true -> Size end};
+bind_format(Value, _Values) when ?IS_VECTOR(Value) ->
+    #format{data_type=?TNS_TYPE_VECTOR, data_length=?TNS_VECTOR_MAX_LENGTH};
 bind_format(Value, _Values) when is_number(Value) ->
     #format{data_type=?TNS_TYPE_NUMBER, data_length=22};
 bind_format({{_,_,_}, {_,_,_,_}}, _Values) ->
@@ -433,12 +435,35 @@ value_bytes(_Format, {in, Value}) ->
     value_bytes(_Format, Value);
 value_bytes(_Format, {raw, Value}) when is_binary(Value) ->
     raw_bytes_and_length(Value);
+value_bytes(#format{data_type=?TNS_TYPE_VECTOR}, Value) ->
+    Image = orax_vector:encode(Value),
+    <<(qlocator(byte_size(Image)))/binary, (raw_bytes_and_length(Image))/binary>>;
 value_bytes(_Format, Value) when is_list(Value); is_binary(Value) ->
     raw_bytes_and_length(bin(Value));
 value_bytes(_Format, Value) when is_number(Value) ->
     raw_bytes_and_length(encode_number(Value));
 value_bytes(_Format, Value) when is_tuple(Value) ->
     raw_bytes_and_length(encode_date(Value)).
+
+%% The value based locator that goes before the image of a VECTOR or JSON
+%% value (write_qlocator): 40 bytes, after their length.
+qlocator(DataLength) ->
+    <<
+    (encode_ub4(40))/binary,                %QLocator length
+    40,                                     %chunk length
+    38:16,                                  %QLocator length less 2 bytes
+    ?TNS_LOB_QLOCATOR_VERSION:16,
+    (?TNS_LOB_LOC_FLAGS_VALUE_BASED bor ?TNS_LOB_LOC_FLAGS_BLOB bor ?TNS_LOB_LOC_FLAGS_ABSTRACT),
+    ?TNS_LOB_LOC_FLAGS_INIT,
+    0:16,                                   %additional flags
+    1:16,                                   %byt1
+    DataLength:64,
+    0:16,                                   %unused
+    0:16,                                   %csid
+    0:16,                                   %unused
+    0:64,                                   %unused
+    0:64                                    %unused
+    >>.
 
 %% Bytes after their length: up to 252 bytes after a length byte, longer ones
 %% in chunks of up to 32767 bytes (ub4 length each) ending with a zero length.
@@ -454,12 +479,15 @@ chunks(Chunk) ->
 
 %% Integers
 
+%% Integers in universal format, in 1, 2, 4 or 8 bytes after their length
+%% (Buffer.write_ub4/write_ub8).
 encode_ub4(0) -> <<0>>;
-encode_ub4(Data) ->
-    Bin = binary:encode_unsigned(Data),
-    <<(byte_size(Bin)), Bin/binary>>.
+encode_ub4(Data) when Data =< 16#ff -> <<1, Data>>;
+encode_ub4(Data) when Data =< 16#ffff -> <<2, Data:16>>;
+encode_ub4(Data) -> <<4, Data:32>>.
 
-encode_ub8(Data) -> encode_ub4(Data).
+encode_ub8(Data) when Data =< 16#ffffffff -> encode_ub4(Data);
+encode_ub8(Data) -> <<8, Data:64>>.
 
 encode_ub2_var(Data) -> encode_ub4(Data).
 
@@ -597,6 +625,7 @@ encode_helper(param, Data) ->
     {varchar, []}, {char, []}, {nvarchar, []}, {nchar, []}, {string, []}, {hexstring, []},
     {clob, clob}, {nclob, clob},
     {raw, {raw, <<>>}}, {blob, {raw, <<>>}}, {binary, {raw, <<>>}},
+    {vector, {float32, []}},
     {date, {1900,1,1}}, {timestamp, {{1900,1,1}, {0,0,0,0}}}, {timestamptz, {{1900,1,1}, {0,0,0,0}, 0}}
     ],
     proplists:get_value(Data, Values, Data);
