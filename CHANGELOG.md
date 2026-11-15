@@ -45,6 +45,8 @@ First release of orax, forked from
   * Bind and fetch VECTOR values in their binary form on 26ai (dense and
     sparse, all formats), as `Orax.Vector` structs in Elixir with the
     `Orax.Ecto.Vector` Ecto type; VECTOR binds before 23.4 are an error.
+    `type(^vector, Orax.Ecto.Vector)` leaves the bind as it is (Oracle has no
+    `CAST` to VECTOR).
   * Keep the sign of negative `INTERVAL DAY TO SECOND` values under a day.
   * Bind RAW values longer than 4000 bytes.
   * A NULL bind takes the type of the first value of the rows that is not

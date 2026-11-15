@@ -77,6 +77,19 @@ defmodule Orax.Integration.VectorTest do
       )
 
     assert Repo.one!(nearest) == Enum.at(returned, 1).id
+
+    typed =
+      from(d in Doc,
+        where: d.id == ^Enum.at(returned, 1).id,
+        select:
+          fragment(
+            "VECTOR_DISTANCE(?, ?, COSINE)",
+            d.embedding,
+            type(^embedding(2), Orax.Ecto.Vector)
+          )
+      )
+
+    assert abs(Repo.one!(typed)) < 1.0e-6
   end
 
   test "vectors of each format and sparse vectors come back as they were bound" do

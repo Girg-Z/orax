@@ -546,6 +546,10 @@ defmodule Orax.Query do
     when type in ~w(binary_id uuid)a  do
     ["HEXTORAW(", expr(literal, sources, query), ?)]
   end
+  # Oracle has no CAST to VECTOR (ORA-22849); vector binds are VECTOR already.
+  defp expr(%Ecto.Query.Tagged{value: literal, type: :vector}, sources, query) do
+    expr(literal, sources, query)
+  end
   # CAST needs a VARCHAR2 length and silently truncates to it; TO_CHAR has
   # no length and raises if the value exceeds the VARCHAR2 maximum.
   defp expr(%Ecto.Query.Tagged{value: literal, type: :string}, sources, query) do
@@ -679,10 +683,11 @@ defmodule Orax.Query do
     end
   end
 
-  # Same as type/2: TO_CHAR for strings, and binaries need no conversion.
+  # Same as type/2: TO_CHAR for strings, and binaries and vectors need no
+  # conversion.
   defp values_bind(idx, :string),
     do: ["TO_CHAR(:", Integer.to_string(idx), ?)]
-  defp values_bind(idx, :binary),
+  defp values_bind(idx, type) when type in [:binary, :vector],
     do: [?: | Integer.to_string(idx)]
   defp values_bind(idx, type),
     do: ["CAST(:", Integer.to_string(idx), " AS ", Orax.SQL.to_db_type(type), ?)]

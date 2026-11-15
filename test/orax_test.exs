@@ -634,6 +634,9 @@ defmodule OraxTest do
 
     query = Schema |> select([], type(^"601d74e4-a8d3-4b6e-8365-eddb4c893327", Ecto.UUID)) |> plan()
     assert all(query) == ~s{SELECT HEXTORAW(:1) FROM schema s0}
+
+    query = Schema |> select([], type(^Orax.Vector.new([1.0]), Orax.Ecto.Vector)) |> plan()
+    assert all(query) == ~s{SELECT :1 FROM schema s0}
   end
 
   test "in expression" do
