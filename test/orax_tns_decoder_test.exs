@@ -55,7 +55,7 @@ defmodule OraxTnsDecoderTest do
       assert {:ok, {0, @row_format, [0], [[{1.0}], [{2.0}], [{3.0}]]}} = expected
 
       for split <- 0..byte_size(data) do
-        <<first::binary-size(split), second::binary>> = data
+        <<first::binary-size(^split), second::binary>> = data
         cont = {<<>>, {0, @row_format, []}}
 
         result =

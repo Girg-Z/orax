@@ -5,6 +5,7 @@ defmodule Orax.MixProject do
     [app: :orax,
      version: "0.5.12",
      elixir: "~> 1.18",
+     test_ignore_filters: [&String.starts_with?(&1, "test/support/")],
      description: description(),
      package: package(),
      deps: deps()]

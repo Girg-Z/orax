@@ -554,7 +554,7 @@ defmodule OraxTest do
   end
 
   test "string escape" do
-    query = "\"Schema\"" |> where('"Foo"': "\" ") |> select([], true) |> plan()
+    query = "\"Schema\"" |> where("\"Foo\"": "\" ") |> select([], true) |> plan()
     assert all(query) == ~s{SELECT 1 FROM \"Schema\" t0 WHERE (t0.\"Foo\" = '\" ')}
   end
 
