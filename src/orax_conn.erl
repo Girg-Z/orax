@@ -138,7 +138,7 @@ query(#oraclient{conn_state=connected, timeouts={_Tout, Deadline}} = State, {Que
         "CLOSE" -> send_req(close, State), handle_error(local, [], State);
         "CURRESET" ->
             #oraclient{cursors=Cursors, close=Close} = State,
-            State2 = State#oraclient{cursors=#{}, close=Close ++ [Id || {Id, _} <- maps:values(Cursors)]},
+            State2 = State#oraclient{cursors=#{}, close=Close ++ [Id || {Id, _, _} <- maps:values(Cursors)]},
             {ok, [], state_of(call(tran, State2, ?TTI_PING), State2)};
         "TIMEOUT" -> {ok, [], State#oraclient{timeouts={hd(Bind), Deadline}}};
         "FETCH" -> {ok, [], State#oraclient{fetch=hd(Bind)}};
@@ -320,14 +320,14 @@ execute(#oraclient{cursors=Cursors, fetch=Fetch, auto=Auto} = State, Query, Kind
     Type = result_type(Kind, Binds),
     Sql = ?ENCODER:encode_str(Query),
     Key = {erlang:crc32(Sql), [F#format.data_type || F <- Formats]},
-    {CursorId, Columns} =
+    {CursorId, Columns, NoPrefetch} =
     case maps:find(Key, Cursors) of
         {ok, Cached} when Kind =/= ddl -> Cached;
-        _ -> {0, []}
+        _ -> {0, [], false}
     end,
     Exec = #exec{cursor_id=CursorId, sql=Sql, kind=Kind, returning=Type =:= return,
                  binds=Formats, rows=Rows,
-                 prefetch=if Kind =:= query, CursorId =/= 0 -> Fetch; true -> 0 end,
+                 prefetch=if Kind =:= query, CursorId =/= 0, not NoPrefetch -> Fetch; true -> 0 end,
                  commit=Auto =:= 1 andalso Kind =/= query},
     Resp = (new_resp(execute, State))#resp{in_fetch=Kind =:= query, returning=Type =:= return,
         binds=Formats, columns=Columns, cursor_id=CursorId,
@@ -360,26 +360,32 @@ result_type(_Kind, _Binds) ->
 executed(_Type, Key, _Mode, #resp{error_num=Num, error_message=Message} = Resp, State)
   when Num =/= 0, Num =/= ?TNS_ERR_NO_DATA_FOUND orelse not Resp#resp.in_fetch ->
     {ok, [{proc_result, Num, Message}], uncache(Key, Num, Resp, State)};
-executed(select, Key, Mode, #resp{cursor_id=CursorId, columns=Columns} = Resp, #oraclient{cursors=Cursors} = State) ->
-    case maps:is_key(Key, Cursors) of
-        true ->
+executed(select, Key, Mode, #resp{cursor_id=CursorId, columns=Columns, described=Described} = Resp,
+         #oraclient{cursors=Cursors} = State) ->
+    case maps:find(Key, Cursors) of
+        {ok, _} when not Described ->
             fetched(State, CursorId, Columns, Resp, Mode);
-        false ->
-            Columns2 = [fetch_format(C) || C <- Columns],
-            State2 = cache(Key, {CursorId, Columns2}, State),
-            define(State2, CursorId, Columns2, Mode)
+        {ok, {_, _, NoPrefetch}} ->
+            %% described again: the columns may need a new define
+            case requires_define(Columns) of
+                true -> define_columns(Key, CursorId, Columns, Mode, State);
+                false -> fetched(cache(Key, {CursorId, Columns, NoPrefetch}, State),
+                                 CursorId, Columns, Resp, Mode)
+            end;
+        error ->
+            define_columns(Key, CursorId, Columns, Mode, State)
     end;
 executed(change, Key, _Mode, #resp{cursor_id=CursorId, rowcount=RowCount}, State) ->
-    {ok, [{affected_rows, RowCount}], cache(Key, {CursorId, []}, State)};
+    {ok, [{affected_rows, RowCount}], cache(Key, {CursorId, [], false}, State)};
 executed(return, Key, _Mode, #resp{cursor_id=CursorId, rows=Rows}, State) ->
     Values =
     case lists:reverse(Rows) of
         [] -> [];
         [First|More] -> lists:foldl(fun(Row, Acc) -> lists:zipwith(fun erlang:'++'/2, Acc, Row) end, First, More)
     end,
-    {ok, [{proc_result, 0, Values}], cache(Key, {CursorId, []}, State)};
+    {ok, [{proc_result, 0, Values}], cache(Key, {CursorId, [], false}, State)};
 executed(block, Key, Mode, #resp{cursor_id=CursorId, rows=Rows}, State) ->
-    State2 = cache(Key, {CursorId, []}, State),
+    State2 = cache(Key, {CursorId, [], false}, State),
     Values = case Rows of [] -> []; [Row|_] -> Row end,
     case [V || {cursor, _, _} = V <- Values] of
         [{cursor, RefCursor, Columns}|_] ->
@@ -392,6 +398,22 @@ executed(block, Key, Mode, #resp{cursor_id=CursorId, rows=Rows}, State) ->
         [] ->
             {ok, [{proc_result, 0, [Values]}], State2}
     end.
+
+%% Caches the cursor of a query with the types its columns are fetched as,
+%% then defines them. A query with LOB, JSON or VECTOR columns is executed
+%% again without fetching rows (no_prefetch): if the server describes it
+%% again, the rows would come with the types of the new describe.
+define_columns(Key, CursorId, Columns, Mode, State) ->
+    Columns2 = [fetch_format(C) || C <- Columns],
+    State2 = cache(Key, {CursorId, Columns2, requires_define(Columns)}, State),
+    define(State2, CursorId, Columns2, Mode).
+
+%% Columns that can only be fetched with a define (_process_describe_info).
+requires_define(Columns) ->
+    lists:any(fun(#format{data_type=T}) ->
+        T =:= ?TNS_TYPE_CLOB orelse T =:= ?TNS_TYPE_BLOB orelse
+        T =:= ?TNS_TYPE_JSON orelse T =:= ?TNS_TYPE_VECTOR
+    end, Columns).
 
 %% Defines the columns of an open cursor and fetches its first rows.
 define(#oraclient{fetch=Fetch} = State, CursorId, Columns, Mode) ->
@@ -460,14 +482,14 @@ define_format(#format{data_type=DataType, max_size=MaxSize} = Format) ->
 %% closed. A statement that fails keeps its cursor only on integrity errors.
 cache(undefined, _Value, State) ->
     State;
-cache(_Key, {0, _Columns}, State) ->
+cache(_Key, {0, _Columns, _NoPrefetch}, State) ->
     State;
 cache(Key, Value, #oraclient{cursors=Cursors, close=Close} = State) ->
     case maps:is_key(Key, Cursors) orelse map_size(Cursors) < 128 of
         true -> State#oraclient{cursors=Cursors#{Key => Value}};
         false ->
             State#oraclient{cursors=#{Key => Value},
-                            close=Close ++ [Id || {Id, _} <- maps:values(Cursors)]}
+                            close=Close ++ [Id || {Id, _, _} <- maps:values(Cursors)]}
     end.
 
 uncache(_Key, Num, _Resp, State) when Num =:= 1; Num =:= 1400; Num =:= 1438; Num =:= 2290;
@@ -567,7 +589,7 @@ send_req(close, #oraclient{auto=0} = State) ->
     _ = call(tran, State, ?TTI_ROLLBACK),
     send_req(close, State#oraclient{auto=1});
 send_req(close, #oraclient{cursors=Cursors, close=Close} = State) ->
-    State2 = State#oraclient{cursors=#{}, close=Close ++ [Id || {Id, _} <- maps:values(Cursors)]},
+    State2 = State#oraclient{cursors=#{}, close=Close ++ [Id || {Id, _, _} <- maps:values(Cursors)]},
     _ = request(close, State2, [], new_resp(call, State2)),
     send_req(close, State2#oraclient{server=0});
 send_req(Type, #oraclient{req=Request} = State) ->

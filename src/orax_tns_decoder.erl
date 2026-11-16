@@ -103,9 +103,10 @@ message(?TTI_RXD, Data, #resp{msg=execute} = Resp) ->
     row_data(Data, Resp);
 message(?TTI_FOB, Data, #resp{msg=execute} = Resp) ->
     {Data, Resp#resp{flush_out_binds=true, end_of_response=true}};
-message(?TTI_DCB, Data, #resp{msg=execute} = Resp) ->
+message(?TTI_DCB, Data, #resp{msg=execute, columns=Previous} = Resp) ->
     {Columns, Rest} = describe_info(skip_bytes(Data), Resp),
-    {Rest, Resp#resp{columns=Columns, out=Columns}};
+    Columns2 = adjust_columns(Columns, Previous),
+    {Rest, Resp#resp{columns=Columns2, out=Columns2, described=true}};
 message(?TTI_BVC, Data, #resp{msg=execute} = Resp) ->
     bit_vector(Data, Resp);
 message(?TTI_IOV, Data, #resp{msg=execute} = Resp) ->
@@ -328,6 +329,24 @@ describe_info(Data, Resp) ->
     E = skip_bytes_with_length(D),          %current date
     F = skip_ub4(skip_ub4(skip_ub4(skip_ub4(E)))),  %dcbflag, dcbmdbz, dcbmnpr, dcbmxpr
     {Columns, skip_bytes_with_length(F)}.   %dcbqcky
+
+%% A query executed again can be described again (the server parsed it
+%% again). A CLOB or BLOB column that was defined as LONG or LONG RAW, or that
+%% was a CHAR or RAW, keeps coming as LONG or LONG RAW: the new describe says
+%% CLOB or BLOB anyway (_adjust_metadata).
+adjust_columns([Column|Columns], [Previous|Previouses]) ->
+    [adjust_column(Column, Previous)|adjust_columns(Columns, Previouses)];
+adjust_columns(Columns, _Previous) ->
+    Columns.
+
+adjust_column(#format{data_type=?TNS_TYPE_CLOB} = Column, #format{data_type=Type, csfrm=Csfrm})
+  when Type =:= ?TNS_TYPE_CHAR; Type =:= ?TNS_TYPE_LONG; Type =:= ?TNS_TYPE_VARCHAR ->
+    Column#format{data_type=?TNS_TYPE_LONG, csfrm=Csfrm};
+adjust_column(#format{data_type=?TNS_TYPE_BLOB} = Column, #format{data_type=Type})
+  when Type =:= ?TNS_TYPE_RAW; Type =:= ?TNS_TYPE_LONGRAW ->
+    Column#format{data_type=?TNS_TYPE_LONGRAW};
+adjust_column(Column, _Previous) ->
+    Column.
 
 %% The metadata of a column (_process_metadata).
 metadata(Data, #resp{caps=#caps{field_version=Version}}) ->

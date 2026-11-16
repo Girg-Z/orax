@@ -20,6 +20,14 @@
 
 ### Bug fixes
 
+  * A cached query with CLOB or BLOB columns that the server parses again
+    (its cursor invalidated, e.g. by another session or under concurrent
+    load) failed with `{:decode_error, ... integer_too_large ...}` in
+    `orax_tns_decoder:lob` and closed the connection: the new describe says
+    CLOB/BLOB while the rows still come as LONG/LONG RAW. The describe is now
+    adjusted to the defined types, queries with LOB, JSON or VECTOR columns
+    are executed again without prefetching rows, and are defined again when
+    needed (as python-oracledb does).
   * Migrations: an `alter table` with more than one change runs one
     `ALTER TABLE` per change. It ran them in a PL/SQL block without doubling
     the quotes, so string and boolean defaults broke it (PLS-00103).

@@ -38,7 +38,7 @@
     sdu,
     server,
     timeouts,
-    cursors = #{},      %statement cache: {sql checksum, bind types} => {cursor id, columns}
+    cursors = #{},      %statement cache: {sql checksum, bind types} => {cursor id, columns, no prefetch}
     close = [],         %cursors to close, piggybacked on the next execute
     env = [],
     passwd,
@@ -105,6 +105,7 @@
     returning = false,      %the row data are the values of the return binds
     binds = [],             %#format{} of the binds, in statement order
     columns = [],           %#format{} of the columns of the query
+    described = false,      %the response described the query (again)
     out = [],               %#format{} of the values in the row data
     bit_vector,             %columns sent in the next row (undefined: all)
     rows = [],              %rows, or values of out binds, last first
