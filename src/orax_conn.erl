@@ -52,38 +52,45 @@ connect(Opts, Tout) ->
     Pass        = proplists:get_value(password, Opts),
     NewPass     = proplists:get_value(newpassword, Opts, []),
     EnvOpts     = proplists:delete(password, proplists:delete(newpassword, Opts)),
-    Passwd = spawn(fun() -> loop({Pass, NewPass}) end),
+    %% kept in a closure, so that the password does not show in the state
+    Passwd = fun() -> {Pass, NewPass} end,
     case gen_tcp:connect(Host, Port, SockOpts, Tout) of
         {ok, Socket} ->
-            {ok, Socket2} = sock_connect(Socket, SslOpts, Tout),
-            {ok, [{recbuf, RecBuf}]} = sock_getopts(Socket2, [recbuf]),
-            sock_setopts(Socket2, [{buffer, RecBuf}]),
-            State = #oraclient{socket=Socket2, env=EnvOpts, passwd=Passwd, auth=Desc,
-            auto=Auto, fetch=Fetch, sdu=Sdu, charset=Charset, timeouts={Tout, deadline(Tout)},
-            caps=orax_caps:new(EnvOpts)},
-            {ok, State2} = send_req(login, State),
-            handle_login(connect, State2#oraclient{conn_state=auth_negotiate});
+            case sock_connect(Socket, SslOpts, Tout) of
+                {ok, Socket2} ->
+                    {ok, [{recbuf, RecBuf}]} = sock_getopts(Socket2, [recbuf]),
+                    sock_setopts(Socket2, [{buffer, RecBuf}]),
+                    State = #oraclient{socket=Socket2, env=EnvOpts, passwd=Passwd, auth=Desc,
+                    auto=Auto, fetch=Fetch, sdu=Sdu, charset=Charset, timeouts={Tout, deadline(Tout)},
+                    caps=orax_caps:new(EnvOpts)},
+                    case send_req(login, State) of
+                        {ok, State2} ->
+                            handle_login(connect, State2#oraclient{conn_state=auth_negotiate});
+                        Error ->
+                            Error
+                    end;
+                {error, Reason} ->
+                    gen_tcp:close(Socket),
+                    handle_error(socket, Reason, #oraclient{})
+            end;
         {error, Reason} ->
             handle_error(socket, Reason, #oraclient{})
     end.
 
 -spec disconnect(state()) -> {ok, [env()]}.
-disconnect(#oraclient{socket=Socket, env=Env, passwd=Passwd}) ->
+disconnect(#oraclient{socket=Socket, env=Env}) ->
     sock_close(Socket),
-    freeval(Passwd),
     {ok, Env}.
 
 -spec disconnect(state(), timeout()) -> {ok, []}.
-disconnect(#oraclient{socket=Socket, passwd=Passwd} = State, _Tout) ->
+disconnect(#oraclient{socket=Socket} = State, _Tout) ->
     send_req(close, State),
     sock_close(Socket),
-    freeval(Passwd),
     {ok, []}.
 
 -spec reconnect(state()) -> empty_result().
 reconnect(#oraclient{passwd=Passwd} = State) ->
-    Passwd ! {get, self()},
-    {Pass, NewPass} = receive Reply -> Reply end,
+    {Pass, NewPass} = Passwd(),
     {ok, EnvOpts} = disconnect(State),
     Pass2 = if NewPass =/= [] -> NewPass; true -> Pass end,
     connect([{password, Pass2}|EnvOpts]).
@@ -138,9 +145,6 @@ query(#oraclient{conn_state=connected, timeouts={_Tout, Deadline}} = State, {Que
         _ -> {ok, undefined, State}
     end.
 
-loop(Values) ->
-    receive {get, From} -> From ! Values, loop(Values); {set, Values2} -> loop(Values2) end.
-
 %% internal
 
 %% Login: connect, protocol and data types negotiation, then the two phases
@@ -164,9 +168,11 @@ handle_login(Step, State) ->
                 andalso Flags2 band ?TNS_ACCEPT_FLAG_HAS_END_OF_RESPONSE =/= 0
                 andalso proplists:get_value(end_of_response, Env, true)
                 andalso offered,
-            Task = spawn(fun() -> loop(0) end),
-            {ok, State3} = send_req(pro, State2#oraclient{seq=Task, sdu=Sdu, version=Version, eor=Eor}),
-            handle_login(protocol, State3);
+            Seq = atomics:new(1, []),
+            case send_req(pro, State2#oraclient{seq=Seq, sdu=Sdu, version=Version, eor=Eor}) of
+                {ok, State3} -> handle_login(protocol, State3);
+                Error -> Error
+            end;
         {ok, ?TNS_MARKER, _Flags, Payload, State2} ->
             case resp_packet(?TNS_MARKER, Payload, {decoding, {<<>>, new_resp(call, State2)}}, new_resp(call, State2), State2) of
                 {ok, Resp, State3} -> login_error(Resp, State3);
@@ -534,14 +540,14 @@ state_of({ok, _Result, State}, _State) -> State;
 state_of({error, _Type, _Reason, State}, _State) -> State;
 state_of(_Result, State) -> State.
 
-freeval(undefined) -> true;
-freeval(Pid) when is_pid(Pid) -> exit(Pid, ok).
-
-nextval(Task) when is_pid(Task) ->
-    Task ! {get, self()},
-    Tseq = receive 127 -> 0; Reply -> Reply end,
-    Task ! {set, Tseq + 1}, Tseq + 1;
-nextval(Tseq) -> Tseq.
+%% The sequence number of each request: 1 to 127, then 1 again. A counter, as
+%% some requests are sent with a state that is not passed on (closing the
+%% cursors on logoff, the rollback before it).
+nextval(Seq) when is_reference(Seq) ->
+    Next = atomics:get(Seq, 1) rem 127 + 1,
+    atomics:put(Seq, 1, Next),
+    Next;
+nextval(Seq) -> Seq.
 
 send_req(login, State) ->
     {Connect, Data} = ?ENCODER:encode_record(login, State),
@@ -560,17 +566,16 @@ send_req(close, #oraclient{server=0, socket=Socket, version=Version}) ->
 send_req(close, #oraclient{auto=0} = State) ->
     _ = call(tran, State, ?TTI_ROLLBACK),
     send_req(close, State#oraclient{auto=1});
-send_req(close, #oraclient{cursors=Cursors, close=Close, seq=Task} = State) ->
+send_req(close, #oraclient{cursors=Cursors, close=Close} = State) ->
     State2 = State#oraclient{cursors=#{}, close=Close ++ [Id || {Id, _} <- maps:values(Cursors)]},
     _ = request(close, State2, [], new_resp(call, State2)),
-    freeval(Task),
     send_req(close, State2#oraclient{server=0});
 send_req(Type, #oraclient{req=Request} = State) ->
     Data = get_record(Type, State, Request),
     send(State, ?TNS_DATA, Data).
 
-get_record(Type, #oraclient{seq=Task} = State, Request) ->
-    ?ENCODER:encode_record(Type, State#oraclient{req=Request, seq=nextval(Task)}).
+get_record(Type, #oraclient{seq=Seq} = State, Request) ->
+    ?ENCODER:encode_record(Type, State#oraclient{req=Request, seq=nextval(Seq)}).
 
 sock_renegotiate(Socket, _Opts, _Touts) when is_port(Socket) -> {ok, Socket};
 sock_renegotiate(Socket, Opts, {Tout, _ReadTout}) ->

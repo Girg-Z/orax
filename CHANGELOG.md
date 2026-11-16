@@ -10,6 +10,18 @@
   * `create_if_not_exists` and `drop_if_exists` of tables, indexes and
     constraints double the quotes of the statement and ignore only the error
     saying the object exists (or does not), instead of every error.
+  * A failed connection is an error returned by `connect` (`ORA-01017`,
+    `ORA-12514: the listener does not know the service ...`, `tcp connect
+    (host:port): connection refused`). It was an exit that killed the caller,
+    so the pool could not retry and a repository whose connections were
+    refused at start (e.g. the database out of processes) went down.
+    `:orax.start_link/1` returns `{error, Reason}` too.
+
+### Internals
+
+  * The connection runs in the DBConnection process, as with Postgrex,
+    without a gen_server between them; the password and the TTC sequence
+    number are no longer kept in processes of their own.
 
 ## 0.2.0
 

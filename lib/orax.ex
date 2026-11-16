@@ -12,7 +12,9 @@ defmodule Orax do
   @timeout 15_000
   @idle_interval 5_000
 
-  defstruct [:pid, :mode, :cursors, :timeout, :idle_interval, autocommit: 1]
+  # The connection runs in the DBConnection process, as with Postgrex: `conn`
+  # is the state of `orax_conn`, which owns the socket.
+  defstruct [:conn, :mode, :cursors, :timeout, :idle_interval, autocommit: 1]
 
   @doc """
   Starts and links to a database connection process.
@@ -29,46 +31,30 @@ defmodule Orax do
     DBConnection.start_link(Orax, opts)
   end
 
-  @doc """
-  Runs the SQL statement.
-
-  See `DBConnection.prepare_execute/4`.
-
-  In case of success, it must return an `:ok` tuple containing
-  a map with at least two keys:
-
-    * `:num_rows` - the number of rows affected
-    * `:rows` - the result set as a list  
-  """
-  @spec query(conn :: any(), sql :: any(), params :: any()) ::
-    {:ok | :cont, any()} | {:error | :disconnect, any()}
-  def query(conn, sql, params \\ [])
-  def query(%{pid: pid, timeout: timeout}, sql, params) do
-    case sql_query(pid, stmt(sql, params), timeout) do
-      {:ok, [{:result_set, columns, _, rows}]} ->
-        {:ok, %{num_rows: length(rows), rows: rows, columns: columns}}
-      {:ok, [{:fetched_rows, _, _, _} = result]} -> {:cont, result}
-      {:ok, [{:proc_result, 0, rows}]} -> {:ok, %{num_rows: length(rows), rows: rows}}
-      {:ok, [{:proc_result, _, msg}]} -> {:error, msg}
-      {:ok, [{:affected_rows, num_rows}]} -> {:ok, %{num_rows: num_rows, rows: nil}}
-      {:ok, result} -> {:ok, result}
-      {:error, type, err} when type in [:timeout, :local] -> {:error, err}
-      {:error, _type, err} -> {:disconnect, err}
+  # Runs a statement, a driver command (COMMIT, COMOFF...) or a fetch, and
+  # returns the state with the connection after it.
+  defp query(s, sql, params \\ []) do
+    case request(s, stmt(sql, params), s.timeout) do
+      {:ok, [{:result_set, columns, _, rows}], s} ->
+        {:ok, %{num_rows: length(rows), rows: rows, columns: columns}, s}
+      {:ok, [{:fetched_rows, _, _, _} = result], s} -> {:cont, result, s}
+      {:ok, [{:proc_result, 0, rows}], s} -> {:ok, %{num_rows: length(rows), rows: rows}, s}
+      {:ok, [{:proc_result, _, msg}], s} -> {:error, msg, s}
+      {:ok, [{:affected_rows, num_rows}], s} -> {:ok, %{num_rows: num_rows, rows: nil}, s}
+      {:ok, result, s} -> {:ok, result, s}
+      {:error, type, err, s} when type in [:timeout, :local] -> {:error, err, s}
+      {:error, _type, err, s} -> {:disconnect, err, s}
     end
   end
-  def query(pid, sql, params) when is_pid(pid) do
-    query(%{pid: pid, timeout: @timeout}, sql, params)
-  end
 
-  defp sql_query(pid, query, timeout) do
-    try do
-      case :orax.sql_query(pid, query, timeout) do
-        {:ok, result} -> {:ok, result}
-        {:error, type, err} -> {:error, type, err}
-      end
-    catch
-      _, err -> {:error, :socket, err}
+  defp request(%{conn: conn} = s, query, timeout) do
+    case :orax_conn.sql_query(conn, query, timeout) do
+      {:ok, result, conn} -> {:ok, result, %{s | conn: conn}}
+      {:error, type, err, conn} -> {:error, type, err, %{s | conn: conn}}
     end
+  catch
+    # the state of the connection is unknown: it is closed
+    kind, reason -> {:error, :socket, {kind, reason, Enum.take(__STACKTRACE__, 5)}, s}
   end
 
   defp stmt({:fetch, sql, params}, _), do: {:fetch, sql, params}
@@ -89,22 +75,48 @@ defmodule Orax do
 	  ++ if( hd(database) == ?:, do: [sid: tl(database)], else: [service_name: database] )
     params = opts[:parameters] || []
     sock_opts = opts[:socket_options] || []
-    case :orax.start_link(sock_opts ++ params ++ env) do
-      {:ok, pid} ->
-        {:ok, %Orax{pid: pid, mode: :idle, timeout: timeout, idle_interval: idle_interval,
+    case :orax_conn.connect(sock_opts ++ params ++ env) do
+      {:ok, conn} ->
+        {:ok, %Orax{conn: conn, mode: :idle, timeout: timeout, idle_interval: idle_interval,
           autocommit: Keyword.get(params, :autocommit, 1)}}
-      {:error, err} -> {:error, error!(err)}
+      {:ok, err, _conn} -> {:error, connect_error(err, opts)}
+      {:error, _type, err, _conn} -> {:error, connect_error(err, opts)}
     end
   end
 
-  @impl true
-  def disconnect(_err, %{pid: pid}) do
-    try do
-      :orax.stop(pid)
-    catch
-      _, _ -> :error
+  # Login errors come as the ORA error of the server; a listener refusing the
+  # connection answers with a description holding the error number, e.g.
+  # (DESCRIPTION=(TMP=)(VSNNUM=0)(ERR=12514)(ERROR_STACK=...)).
+  defp connect_error([{:proc_result, _code, message}], _opts),
+    do: error!(String.trim_trailing(message))
+  defp connect_error(description, opts) when is_binary(description) do
+    case Regex.run(~r/\(ERR=(\d+)\)/, description) do
+      [_, code] ->
+        error!("ORA-#{String.pad_leading(code, 5, "0")}: #{refusal(code, opts)} #{description}")
+      nil ->
+        error!(description)
     end
+  end
+  defp connect_error(reason, opts) do
+    message = if is_atom(reason), do: "#{:inet.format_error(reason)} - #{inspect(reason)}", else: inspect(reason)
+    error!("tcp connect (#{opts[:hostname]}:#{opts[:port]}): #{message}")
+  end
+
+  defp refusal("12514", opts),
+    do: "the listener does not know the service #{inspect(opts[:database])}"
+  defp refusal("12505", opts),
+    do: "the listener does not know the SID #{inspect(opts[:database])}"
+  defp refusal(code, _opts) when code in ["12516", "12519", "12520"],
+    do: "the listener has no handler for the connection (has the database reached its processes limit?)"
+  defp refusal(_code, _opts),
+    do: "the listener refused the connection"
+
+  @impl true
+  def disconnect(_err, %{conn: conn}) do
+    :orax_conn.disconnect(conn, 1)
     :ok
+  catch
+    _, _ -> :ok
   end
 
   # Out binds come back as one list per bind, each holding a value for every
@@ -129,42 +141,42 @@ defmodule Orax do
     %Orax.Query{statement: statement} = query
     returning = Enum.map(Keyword.get(opts, :out, []), fn elem -> {:out, elem} end)
     batch = {:batch, statement |> Orax.to_list, Enum.map(params, &(&1 ++ returning))}
-    case atomic(s, length(params), fn -> query(s, batch, []) end) do
-      {:ok, result} -> {:ok, query, out_rows(result, opts), s}
-      {:error, err} -> {:error, error!(err), s}
-      {:disconnect, err} -> {:disconnect, error!(err), s}
+    case atomic(s, length(params), &query(&1, batch)) do
+      {:ok, result, s} -> {:ok, query, out_rows(result, opts), s}
+      {:error, err, s} -> {:error, error!(err), s}
+      {:disconnect, err, s} -> {:disconnect, error!(err), s}
     end
   end
   def handle_execute(query, params, opts, s) do
     %Orax.Query{statement: statement} = query
     returning = Enum.map(Keyword.get(opts, :out, []), fn elem -> {:out, elem} end)
     case query(s, statement |> Orax.to_list, Enum.concat(params, returning)) do
-      {:ok, result} -> {:ok, query, out_rows(result, opts), s}
-      {:error, err} -> {:error, error!(err), s}
-      {:disconnect, err} -> {:disconnect, error!(err), s}
+      {:ok, result, s} -> {:ok, query, out_rows(result, opts), s}
+      {:error, err, s} -> {:error, error!(err), s}
+      {:disconnect, err, s} -> {:disconnect, error!(err), s}
     end
   end
 
-  defp atomic(_s, 1, fun), do: fun.()
+  defp atomic(s, 1, fun), do: fun.(s)
   defp atomic(%{mode: :idle, autocommit: 1} = s, _rows, fun) do
-    case fun.() do
-      {:error, _err} = error -> undo(s, ~c"ROLLBACK", error)
+    case fun.(s) do
+      {:error, err, s} -> undo(s, ~c"ROLLBACK", err)
       result -> result
     end
   end
   defp atomic(s, _rows, fun) do
-    with {:ok, _} <- query(s, ~c"SAVEPOINT orax_batch") do
-      case fun.() do
-        {:error, _err} = error -> undo(s, ~c"ROLLBACK TO orax_batch", error)
+    with {:ok, _, s} <- query(s, ~c"SAVEPOINT orax_batch") do
+      case fun.(s) do
+        {:error, err, s} -> undo(s, ~c"ROLLBACK TO orax_batch", err)
         result -> result
       end
     end
   end
 
-  defp undo(s, statement, error) do
+  defp undo(s, statement, err) do
     case query(s, statement) do
-      {:disconnect, _err} = disconnect -> disconnect
-      _ -> error
+      {:disconnect, _err, _s} = disconnect -> disconnect
+      {_status, _result, s} -> {:error, err, s}
     end
   end
 
@@ -251,9 +263,9 @@ defmodule Orax do
 
   defp handle_transaction(statement, _opts, s) do
     case query(s, statement |> Orax.to_list) do
-      {:ok, result} -> {:ok, result, s}
-      {:error, err} -> {:error, error!(err), s}
-      {:disconnect, err} -> {:disconnect, error!(err), s}
+      {:ok, result, s} -> {:ok, result, s}
+      {:error, err, s} -> {:error, error!(err), s}
+      {:disconnect, err, s} -> {:disconnect, error!(err), s}
     end
   end
 
@@ -266,27 +278,27 @@ defmodule Orax do
   def handle_fetch(query, %{params: params}, _opts, %{cursors: nil} = s) do
     %Orax.Query{statement: statement} = query
     case query(s, {:fetch, statement |> Orax.to_list, params}) do
-      {:cont, {_, cursor, row_format, rows}} ->
+      {:cont, {_, cursor, row_format, rows}, s} ->
         cursors = %{cursor: cursor, row_format: row_format, last_row: List.last(rows)}
         {:cont,  %{num_rows: length(rows), rows: rows}, %{s | cursors: cursors}}
-      {:ok, result} -> 
+      {:ok, result, s} -> 
         {:halt, result, s}
-      {:error, err} -> {:error, error!(err), s}
-      {:disconnect, err} -> {:disconnect, error!(err), s}
+      {:error, err, s} -> {:error, error!(err), s}
+      {:disconnect, err, s} -> {:disconnect, error!(err), s}
     end
   end
   def handle_fetch(_query, _cursor, _opts, %{cursors: cursors} = s) do
     %{cursor: cursor, row_format: row_format, last_row: last_row} = cursors
     case query(s, {:fetch, cursor, row_format, last_row}) do
-      {:cont, {_, _, _, rows}} ->
+      {:cont, {_, _, _, rows}, s} ->
         rows = tl(rows)
         {:cont,  %{num_rows: length(rows), rows: rows}, 
         %{s | cursors: %{cursors | last_row: List.last(rows)}}}
-      {:ok, %{rows: rows} = result} -> 
+      {:ok, %{rows: rows} = result, s} -> 
         rows = tl(rows)
         {:halt, %{result | num_rows: length(rows), rows: rows}, s}
-      {:error, err} -> {:error, error!(err), s}
-      {:disconnect, err} -> {:disconnect, error!(err), s}
+      {:error, err, s} -> {:error, error!(err), s}
+      {:disconnect, err, s} -> {:disconnect, error!(err), s}
     end
   end
 
@@ -311,18 +323,18 @@ defmodule Orax do
   end
 
   @impl true
-  def checkout(%{pid: pid, timeout: timeout} = s) do
-    case sql_query(pid, ~c'SESSION', timeout) do
-      {:ok, _} -> {:ok, s}
-      {:error, _type, err} -> {:disconnect, error!(err), s}
+  def checkout(%{timeout: timeout} = s) do
+    case request(s, ~c'SESSION', timeout) do
+      {:ok, _, s} -> {:ok, s}
+      {:error, _type, err, s} -> {:disconnect, error!(err), s}
     end
   end
 
   @impl true
-  def ping(%{pid: pid, timeout: timeout, idle_interval: idle_interval} = s) do
-    case sql_query(pid, ~c'PING', min(timeout, idle_interval)) do
-      {:ok, _} -> {:ok, s}
-      {:error, _type, err} -> {:disconnect, error!(err), s}
+  def ping(%{timeout: timeout, idle_interval: idle_interval} = s) do
+    case request(s, ~c'PING', min(timeout, idle_interval)) do
+      {:ok, _, s} -> {:ok, s}
+      {:error, _type, err, s} -> {:disconnect, error!(err), s}
     end
   end
 
