@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+### Breaking changes from 0.2.0
+
+  * `Orax.query/3` is removed: it ran a statement on a pid of the orax
+    gen_server, which DBConnection no longer starts. `%Orax{}` keeps the
+    state of the connection in `:conn` instead of `:pid`. Use Ecto or
+    `DBConnection`, or the Erlang API (`:orax.start_link/1`).
+  * `create_if_not_exists` and `drop_if_exists` raise the errors other than
+    the object existing (or not); they ignored every error before.
 
 ### Features
 

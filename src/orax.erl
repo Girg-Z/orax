@@ -1,5 +1,4 @@
 -module(orax).
--vsn("0.1.0").
 -behaviour(gen_server).
 
 %% API
