@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Bug fixes
+
+  * Migrations: an `alter table` with more than one change runs one
+    `ALTER TABLE` per change. It ran them in a PL/SQL block without doubling
+    the quotes, so string and boolean defaults broke it (PLS-00103).
+  * `create_if_not_exists` and `drop_if_exists` of tables, indexes and
+    constraints double the quotes of the statement and ignore only the error
+    saying the object exists (or does not), instead of every error.
+
 ## 0.2.0
 
 ### Breaking changes from 0.1.0
