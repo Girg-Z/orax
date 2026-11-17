@@ -1274,16 +1274,69 @@ defmodule OraxTest do
        ]}
 
     expected_ddl = [
-      """
-      BEGIN EXECUTE IMMEDIATE 'ALTER TABLE posts ADD title varchar2(100) DEFAULT 'Untitled' NOT NULL';
-      EXECUTE IMMEDIATE 'ALTER TABLE posts ADD author_id int CONSTRAINT posts_author_id_fkey REFERENCES author(id)';
-      EXECUTE IMMEDIATE 'ALTER TABLE posts MODIFY (price numeric(8,2) NULL)';
-      EXECUTE IMMEDIATE 'ALTER TABLE posts DROP COLUMN summary'; END;
-      """
-      |> remove_newlines
+      "ALTER TABLE posts ADD title varchar2(100) DEFAULT 'Untitled' NOT NULL",
+      "ALTER TABLE posts ADD author_id int CONSTRAINT posts_author_id_fkey REFERENCES author(id)",
+      "ALTER TABLE posts MODIFY (price numeric(8,2) NULL)",
+      "ALTER TABLE posts DROP COLUMN summary"
     ]
 
     assert execute_ddl(alter) == expected_ddl
+  end
+
+  test "create table if not exists doubles the quotes of the statement" do
+    create =
+      {:create_if_not_exists, table(:posts),
+       [
+         {:add, :title, :string, [default: "It's new", size: 100]},
+         {:add, :active, :boolean, [default: false, null: false]}
+       ]}
+
+    assert execute_ddl(create) == [
+      """
+      BEGIN EXECUTE IMMEDIATE 'CREATE TABLE posts (title varchar2(100) DEFAULT ''It''''s new'',
+      active char(1) DEFAULT ''0'' NOT NULL)';
+      EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;
+      """
+      |> remove_newlines
+    ]
+  end
+
+  test "drop table if exists" do
+    drop = {:drop_if_exists, table(:posts), :test}
+
+    assert execute_ddl(drop) == [
+      """
+      BEGIN EXECUTE IMMEDIATE 'DROP TABLE posts';
+      EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;
+      """
+      |> remove_newlines
+    ]
+  end
+
+  test "drop index if exists" do
+    drop = {:drop_if_exists, index(:posts, [:title]), :test}
+
+    assert execute_ddl(drop) == [
+      """
+      BEGIN EXECUTE IMMEDIATE 'DROP INDEX posts_title_index';
+      EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1418 THEN RAISE; END IF; END;
+      """
+      |> remove_newlines
+    ]
+  end
+
+  test "create constraint if not exists" do
+    create =
+      {:create_if_not_exists,
+       constraint(:products, "status_is_known", check: "status IN ('a', 'b')")}
+
+    assert execute_ddl(create) == [
+      """
+      BEGIN EXECUTE IMMEDIATE 'ALTER TABLE products ADD CONSTRAINT status_is_known CHECK (status IN (''a'', ''b''))';
+      EXCEPTION WHEN OTHERS THEN IF SQLCODE != -2264 THEN RAISE; END IF; END;
+      """
+      |> remove_newlines
+    ]
   end
 
   test "alter table with prefix" do
@@ -1296,12 +1349,9 @@ defmodule OraxTest do
        ]}
 
     expected_ddl = [
-      """
-      BEGIN EXECUTE IMMEDIATE 'ALTER TABLE foo.posts ADD title varchar2(100) DEFAULT 'Untitled' NOT NULL';
-      EXECUTE IMMEDIATE 'ALTER TABLE foo.posts MODIFY (price numeric(8,2))';
-      EXECUTE IMMEDIATE 'ALTER TABLE foo.posts DROP COLUMN summary'; END;
-      """
-      |> remove_newlines
+      "ALTER TABLE foo.posts ADD title varchar2(100) DEFAULT 'Untitled' NOT NULL",
+      "ALTER TABLE foo.posts MODIFY (price numeric(8,2))",
+      "ALTER TABLE foo.posts DROP COLUMN summary"
     ]
 
     assert execute_ddl(alter) == expected_ddl
@@ -1336,7 +1386,7 @@ defmodule OraxTest do
     assert execute_ddl(drop) == [
       """
       BEGIN EXECUTE IMMEDIATE 'ALTER TABLE products DROP CONSTRAINT price_must_be_positive';
-      EXCEPTION WHEN OTHERS THEN NULL; END;
+      EXCEPTION WHEN OTHERS THEN IF SQLCODE != -2443 THEN RAISE; END IF; END;
       """
       |> remove_newlines
     ]
@@ -1373,7 +1423,7 @@ defmodule OraxTest do
     assert execute_ddl(create) == [
       """
       BEGIN EXECUTE IMMEDIATE 'CREATE INDEX foo.posts_category_id_permalink_index ON foo.posts (category_id, permalink)';
-      EXCEPTION WHEN OTHERS THEN NULL; END;
+      EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;
       """
       |> remove_newlines
     ]

@@ -149,6 +149,53 @@ defmodule Ecto.Adapters.Orax do
     Ecto.Adapters.SQL.ensure_all_started(:orax, config, type)
   end
 
+  # Storage: the "database" of an Oracle repository is a user (schema), which
+  # a DBA creates. It is up when the user logs in, so `mix ecto.create` only
+  # checks the login; dropping a user is left to the DBA.
+
+  @behaviour Ecto.Adapter.Storage
+
+  @impl Ecto.Adapter.Storage
+  def storage_up(opts) do
+    case login(opts) do
+      :ok -> {:error, :already_up}
+      {:error, message} -> {:error, message}
+    end
+  end
+
+  @impl Ecto.Adapter.Storage
+  def storage_down(opts) do
+    {:error,
+     "dropping the database is not supported by Oracle repositories: the database " <>
+       "is the user #{inspect(opts[:username])}, which a DBA drops (DROP USER ... CASCADE)"}
+  end
+
+  @impl Ecto.Adapter.Storage
+  def storage_status(opts) do
+    case login(opts) do
+      :ok -> :up
+      {:error, message} -> {:error, message}
+    end
+  end
+
+  defp login(opts) do
+    {:ok, _} = Application.ensure_all_started(:orax)
+
+    case Orax.connect(opts) do
+      {:ok, state} ->
+        Orax.disconnect(nil, state)
+
+      {:error, %DBConnection.ConnectionError{message: "ORA-01017" <> _ = message}} ->
+        {:error,
+         message <>
+           "\nThe database of an Oracle repository is a user (schema), which a DBA creates: " <>
+           "check that the user #{inspect(opts[:username])} exists and its password."}
+
+      {:error, %DBConnection.ConnectionError{message: message}} ->
+        {:error, message}
+    end
+  end
+
   @impl true
   def loaders({:embed, _}, type), do: [&json_decode/1, &Ecto.Type.embedded_load(type, &1, :json)]
   def loaders({:map, _}, type),   do: [&json_decode/1, &Ecto.Type.embedded_load(type, &1, :json)]

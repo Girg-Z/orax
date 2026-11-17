@@ -19,44 +19,47 @@ defmodule Orax.SQL do
     end
   end
 
+  # Oracle has no IF [NOT] EXISTS before 23ai: the statement runs in a PL/SQL
+  # block that ignores only the error saying the object already exists (or
+  # does not exist), see `ignore_error/3`.
+  @name_in_use -955
+  @no_such_table -942
+  @no_such_index -1418
+  @constraint_name_in_use -2264
+  @no_such_constraint -2443
+
   def execute_ddl({command, %Table{} = table, columns}) when command in [:create, :create_if_not_exists] do
     table_name = quote_object(table.prefix, table.name)
-    [[if_do(command == :create_if_not_exists, :begin),
-      "CREATE TABLE ", table_name, ?\s,
-      ?(, column_definitions(table, columns), pk_definition(table, columns, ", "), ?),
-      options_expr(table.options),
-      if_do(command == :create_if_not_exists, :end)]]
+    [ignore_error(command == :create_if_not_exists, @name_in_use,
+      ["CREATE TABLE ", table_name, ?\s,
+       ?(, column_definitions(table, columns), pk_definition(table, columns, ", "), ?),
+       options_expr(table.options)])]
   end
 
   def execute_ddl({command, %Table{} = table, _}) when command in [:drop, :drop_if_exists] do
-    [[if_do(command == :drop_if_exists, :begin),
-      "DROP TABLE ", quote_object(table.prefix, table.name),
-      if_do(command == :drop_if_exists, :end)]]
+    [ignore_error(command == :drop_if_exists, @no_such_table,
+      ["DROP TABLE ", quote_object(table.prefix, table.name)])]
   end
 
+  # One statement per change: DDL commits implicitly in Oracle, so running the
+  # changes together would not make them atomic anyway.
   def execute_ddl({:alter, %Table{} = table, changes}) do
     table_name = quote_object(table.prefix, table.name)
-    if_do = length(changes) > 1
-    query =
-      for change <- changes,
-        do: if_do(if_do, :execute, [["ALTER TABLE ", table_name, ?\s], column_change(table, change)])
-
-    [[if_do(if_do, :begin, []), query, if_do(if_do, :end, [])]]
+    for change <- changes,
+      do: ["ALTER TABLE ", table_name, ?\s, column_change(table, change)]
   end
 
   def execute_ddl({command, %Index{} = index}) when command in [:create, :create_if_not_exists] do
-    [[if_do(command == :create_if_not_exists, :begin),
-      "CREATE", if_do(index.unique, " UNIQUE"), " INDEX ", quote_object(index.prefix, index.name),
-      " ON ", quote_object(index.prefix, index.table), ?\s,
-      ?(, intersperse_map(index.columns, ", ", &index_expr/1), ?),
-      if_do(index.concurrently, " ONLINE"), options_expr(index.options),
-      if_do(command == :create_if_not_exists, :end)]]
+    [ignore_error(command == :create_if_not_exists, @name_in_use,
+      ["CREATE", if_do(index.unique, " UNIQUE"), " INDEX ", quote_object(index.prefix, index.name),
+       " ON ", quote_object(index.prefix, index.table), ?\s,
+       ?(, intersperse_map(index.columns, ", ", &index_expr/1), ?),
+       if_do(index.concurrently, " ONLINE"), options_expr(index.options)])]
   end
 
   def execute_ddl({command, %Index{} = index, _}) when command in [:drop, :drop_if_exists] do
-    [[if_do(command == :drop_if_exists, :begin),
-      "DROP INDEX ", quote_object(index.prefix, index.name),
-      if_do(command == :drop_if_exists, :end)]]
+    [ignore_error(command == :drop_if_exists, @no_such_index,
+      ["DROP INDEX ", quote_object(index.prefix, index.name)])]
   end
 
   def execute_ddl({:rename, %Table{} = current_table, %Table{} = new_table}) do
@@ -73,17 +76,15 @@ defmodule Orax.SQL do
   end
 
   def execute_ddl({command, %Constraint{} = constraint}) when command in [:create, :create_if_not_exists] do
-    [[if_do(command == :create_if_not_exists, :begin),
-      "ALTER TABLE ", quote_object(constraint.prefix, constraint.table),
-      " ADD CONSTRAINT ", quote_object(constraint.name), constraint_expr(constraint),
-      if_do(command == :create_if_not_exists, :end)]]
+    [ignore_error(command == :create_if_not_exists, @constraint_name_in_use,
+      ["ALTER TABLE ", quote_object(constraint.prefix, constraint.table),
+       " ADD CONSTRAINT ", quote_object(constraint.name), constraint_expr(constraint)])]
   end
 
   def execute_ddl({command, %Constraint{} = constraint, _}) when command in [:drop, :drop_if_exists] do
-    [[if_do(command == :drop_if_exists, :begin),
-      "ALTER TABLE ", quote_object(constraint.prefix, constraint.table),
-      " DROP CONSTRAINT ", quote_object(constraint.name),
-      if_do(command == :drop_if_exists, :end)]]
+    [ignore_error(command == :drop_if_exists, @no_such_constraint,
+      ["ALTER TABLE ", quote_object(constraint.prefix, constraint.table),
+       " DROP CONSTRAINT ", quote_object(constraint.name)])]
   end
 
   def execute_ddl(string) when is_binary(string), do: [string]
@@ -289,24 +290,17 @@ defmodule Orax.SQL do
   defp ecto_to_db(type),
     do: error!(nil, "unsupported type `#{inspect(type)}`")
 
-  defp if_do(condition, :begin) do
-    if condition, do: "BEGIN EXECUTE IMMEDIATE '", else: []
-  end
-  defp if_do(condition, :end) do
-    if condition, do: "'; EXCEPTION WHEN OTHERS THEN NULL; END;", else: []
-  end
   defp if_do(condition, value) do
     if condition, do: value, else: []
   end
 
-  defp if_do(condition, :begin, expr) do
-    if condition, do: ["BEGIN", expr], else: expr
-  end
-  defp if_do(condition, :end, expr) do
-    if condition, do: [expr, " END;"], else: expr
-  end
-  defp if_do(condition, :execute, expr) do
-    if condition, do: [" EXECUTE IMMEDIATE '", expr, "';"], else: expr
+  # Runs the statement and ignores the given ORA error, any other error is
+  # raised. The statement goes in a string literal, so its quotes are doubled.
+  defp ignore_error(false, _code, statement), do: statement
+  defp ignore_error(true, code, statement) do
+    ["BEGIN EXECUTE IMMEDIATE '", escape_string(IO.iodata_to_binary(statement)),
+     "'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != ", Integer.to_string(code),
+     " THEN RAISE; END IF; END;"]
   end
 
   @doc false

@@ -1,5 +1,4 @@
 -module(orax).
--vsn("0.1.0").
 -behaviour(gen_server).
 
 %% API
@@ -39,14 +38,19 @@ call_timeout(infinity) -> infinity;
 call_timeout(Tout) -> 2 * Tout + 1000.
 
 %% gen_server callbacks
+%% A failed connection returns {error, Reason} (the process exits normally),
+%% so that start_link/1 returns the error without killing the caller.
 init(Opts) ->
-    case orax_conn:connect(Opts) of
+    try orax_conn:connect(Opts) of
         {ok, State} ->
             {ok, State};
         {ok, Result, _State} ->
-            {stop, Result};
+            {error, Result};
         {error, Type, Result, _State} ->
-            {stop, {Type, Result}}
+            {error, {Type, Result}}
+    catch
+        Class:Reason:Stack ->
+            {error, {socket, {Class, Reason, lists:sublist(Stack, 5)}}}
     end.
 
 %% Error types: socket (the connection is closed), remote, timeout (the call
